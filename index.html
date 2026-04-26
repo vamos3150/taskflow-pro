@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskFlow Pro</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f4f5f7; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+    .kanban-col { min-width: 260px; flex: 1; max-width: 320px; }
+    .drag-over { outline: 2px dashed #6366f1 !important; background: #eef2ff !important; }
+    [draggable] { cursor: grab; user-select: none; }
+    [draggable]:active { cursor: grabbing; }
+    .panel-enter { animation: slideIn .15s ease; }
+    @keyframes slideIn { from { transform: translateX(16px); opacity: 0; } to { transform: none; opacity: 1; } }
+    .tab-active { border-bottom: 2px solid #6366f1; color: #6366f1 !important; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useCallback, useMemo } = React;
+
+// ─── localStorage data layer ──────────────────────────────────────────
+const KEY = 'taskflow_pro_v1';
+
+function now() { return new Date().toISOString(); }
+function uid() { return Date.now() + Math.random().toString(36).slice(2); }
+
+function loadDB() {
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return null;
+}
+function saveDB(db) {
+  localStorage.setItem(KEY, JSON.stringify(db));
+}
+
+function initDB() {
+  const n = new Date();
+  const d = (days) => new Date(n.getTime() + days * 86400000).toISOString();
+  const projects = [
+    { id: 'p1', name: 'Webサイトリニューアル', color: '#6366f1', created_at: now() },
+    { id: 'p2', name: 'モバイルアプリ開発',    color: '#0ea5e9', created_at: now() },
+    { id: 'p3', name: 'マーケティング施策',    color: '#f59e0b', created_at: now() },
+    { id: 'p4', name: '社内業務改善',          color: '#10b981', created_at: now() },
+  ];
+  const tasks = [
+    { id: 't1',  project_id: 'p1', title: '要件定義書の作成',         status: '未着手',   priority: '高', assignee: '山田 太郎', labels: 'ドキュメント', due_date: d(40), description: '', created_at: now(), updated_at: now() },
+    { id: 't2',  project_id: 'p1', title: '競合サイトの調査',         status: '未着手',   priority: '中', assignee: '佐藤 花子', labels: '',            due_date: d(42), description: '', created_at: now(), updated_at: now() },
+    { id: 't3',  project_id: 'p1', title: 'ワイヤーフレームの作成',   status: '未着手',   priority: '中', assignee: '鈴木 一郎', labels: '',            due_date: d(45), description: '', created_at: now(), updated_at: now() },
+    { id: 't4',  project_id: 'p1', title: 'コンテンツ構成案の作成',   status: '未着手',   priority: '低', assignee: '田中 美咲', labels: '',            due_date: d(47), description: '', created_at: now(), updated_at: now() },
+    { id: 't5',  project_id: 'p1', title: 'デザインコンセプトの策定', status: '未着手',   priority: '中', assignee: '山田 太郎', labels: '',            due_date: d(50), description: '', created_at: now(), updated_at: now() },
+    { id: 't6',  project_id: 'p1', title: 'トップページのデザイン作成', status: '進行中', priority: '高', assignee: '鈴木 一郎', labels: 'デザイン,トップページ', due_date: d(5), description: 'トップページのデザインカンプを作成してください。PC版とスマートフォン版の両方をお願いします。', created_at: now(), updated_at: now() },
+    { id: 't7',  project_id: 'p1', title: '下層ページのデザイン作成', status: '進行中',   priority: '中', assignee: '田中 美咲', labels: 'デザイン',    due_date: d(8),  description: '', created_at: now(), updated_at: now() },
+    { id: 't8',  project_id: 'p1', title: 'コーディング（トップページ）', status: '進行中', priority: '高', assignee: '伊藤 健太', labels: 'コーディング', due_date: d(9), description: '', created_at: now(), updated_at: now() },
+    { id: 't9',  project_id: 'p1', title: 'お問い合わせフォームの実装', status: '進行中', priority: '中', assignee: '伊藤 健太', labels: '',            due_date: d(11), description: '', created_at: now(), updated_at: now() },
+    { id: 't10', project_id: 'p1', title: 'スマートフォン表示の確認', status: 'レビュー中', priority: '高', assignee: '佐藤 花子', labels: 'テスト',   due_date: d(3),  description: '', created_at: now(), updated_at: now() },
+    { id: 't11', project_id: 'p1', title: 'SEO対策の確認',            status: 'レビュー中', priority: '中', assignee: '山田 太郎', labels: 'SEO',     due_date: d(4),  description: '', created_at: now(), updated_at: now() },
+    { id: 't12', project_id: 'p1', title: 'プロジェクトキックオフ',   status: '完了',   priority: '高', assignee: '山田 太郎', labels: '',              due_date: d(-30), description: '', created_at: now(), updated_at: now() },
+    { id: 't13', project_id: 'p1', title: 'サイトマップの作成',       status: '完了',   priority: '中', assignee: '鈴木 一郎', labels: '',              due_date: d(-20), description: '', created_at: now(), updated_at: now() },
+    { id: 't14', project_id: 'p1', title: 'ロゴ・画像素材の準備',    status: '完了',   priority: '中', assignee: '田中 美咲', labels: 'デザイン',      due_date: d(-10), description: '', created_at: now(), updated_at: now() },
+    { id: 't15', project_id: 'p2', title: 'ログイン画面実装',         status: '進行中', priority: '高', assignee: '佐藤 花子', labels: '',              due_date: d(10),  description: '', created_at: now(), updated_at: now() },
+    { id: 't16', project_id: 'p2', title: 'プッシュ通知対応',         status: '未着手', priority: '中', assignee: '鈴木 一郎', labels: '',              due_date: d(20),  description: '', created_at: now(), updated_at: now() },
+    { id: 't17', project_id: 'p2', title: 'API連携テスト',            status: 'レビュー中', priority: '高', assignee: '伊藤 健太', labels: 'テスト',  due_date: d(5),   description: '', created_at: now(), updated_at: now() },
+    { id: 't18', project_id: 'p2', title: 'ストア申請',               status: '未着手', priority: '中', assignee: '山田 太郎', labels: '',              due_date: d(30),  description: '', created_at: now(), updated_at: now() },
+  ];
+  const subtasks = [
+    { id: 's1', task_id: 't6', title: 'デザインコンセプトの確認',     done: true },
+    { id: 's2', task_id: 't6', title: 'PC版デザインの作成',           done: true },
+    { id: 's3', task_id: 't6', title: 'スマートフォン版デザインの作成', done: false },
+    { id: 's4', task_id: 't6', title: 'デザインレビュー・修正',       done: false },
+    { id: 's5', task_id: 't8', title: 'HTML/CSSコーディング',         done: true },
+    { id: 's6', task_id: 't8', title: 'JavaScript実装',               done: true },
+    { id: 's7', task_id: 't8', title: 'レスポンシブ対応',             done: true },
+    { id: 's8', task_id: 't8', title: 'ブラウザテスト',               done: false },
+    { id: 's9', task_id: 't8', title: 'パフォーマンス最適化',         done: false },
+  ];
+  const comments = [
+    { id: 'c1', task_id: 't6', author: '山田 太郎', content: 'デザインコンセプトを共有します。ご確認をお願いします。', created_at: new Date(Date.now() - 7200000).toISOString() },
+    { id: 'c2', task_id: 't6', author: '鈴木 一郎', content: 'ありがとうございます。確認しました。PC版は問題ないです。スマートフォン版のモックアップも楽しみにしています！', created_at: new Date(Date.now() - 3600000).toISOString() },
+  ];
+  return { projects, tasks, subtasks, comments };
+}
+
+function getDB() {
+  let db = loadDB();
+  if (!db) { db = initDB(); saveDB(db); }
+  return db;
+}
+
+// ─── CRUD helpers ─────────────────────────────────────────────────────
+const DB = {
+  getProjects: () => getDB().projects,
+  getProject: (id) => getDB().projects.find(p => p.id === id),
+  createProject: (data) => {
+    const db = getDB();
+    const p = { id: uid(), created_at: now(), color: '#6366f1', ...data };
+    db.projects.push(p);
+    saveDB(db);
+    return p;
+  },
+  deleteProject: (id) => {
+    const db = getDB();
+    db.projects = db.projects.filter(p => p.id !== id);
+    const taskIds = db.tasks.filter(t => t.project_id === id).map(t => t.id);
+    db.tasks = db.tasks.filter(t => t.project_id !== id);
+    db.subtasks = db.subtasks.filter(s => !taskIds.includes(s.task_id));
+    db.comments = db.comments.filter(c => !taskIds.includes(c.task_id));
+    saveDB(db);
+  },
+  getTasks: (filters = {}) => {
+    let tasks = getDB().tasks;
+    if (filters.project_id) tasks = tasks.filter(t => t.project_id === filters.project_id);
+    if (filters.status)     tasks = tasks.filter(t => t.status === filters.status);
+    if (filters.priority)   tasks = tasks.filter(t => t.priority === filters.priority);
+    if (filters.assignee)   tasks = tasks.filter(t => t.assignee === filters.assignee);
+    if (filters.q)          tasks = tasks.filter(t => t.title.toLowerCase().includes(filters.q.toLowerCase()));
+    const db = getDB();
+    return tasks.map(t => {
+      const subs = db.subtasks.filter(s => s.task_id === t.id);
+      return { ...t, subtask_count: subs.length, done_subtask_count: subs.filter(s => s.done).length };
+    });
+  },
+  getTask: (id) => {
+    const db = getDB();
+    const t = db.tasks.find(t => t.id === id);
+    if (!t) return null;
+    return {
+      ...t,
+      subtasks: db.subtasks.filter(s => s.task_id === id),
+      comments: db.comments.filter(c => c.task_id === id).sort((a, b) => a.created_at.localeCompare(b.created_at)),
+    };
+  },
+  createTask: (data) => {
+    const db = getDB();
+    const t = { id: uid(), created_at: now(), updated_at: now(), description: '', assignee: '', labels: '', due_date: null, ...data };
+    db.tasks.push(t);
+    saveDB(db);
+    return t;
+  },
+  updateTask: (id, data) => {
+    const db = getDB();
+    const idx = db.tasks.findIndex(t => t.id === id);
+    if (idx === -1) return;
+    db.tasks[idx] = { ...db.tasks[idx], ...data, updated_at: now() };
+    saveDB(db);
+    return db.tasks[idx];
+  },
+  deleteTask: (id) => {
+    const db = getDB();
+    db.tasks = db.tasks.filter(t => t.id !== id);
+    db.subtasks = db.subtasks.filter(s => s.task_id !== id);
+    db.comments = db.comments.filter(c => c.task_id !== id);
+    saveDB(db);
+  },
+  createSubtask: (task_id, title) => {
+    const db = getDB();
+    const s = { id: uid(), task_id, title, done: false };
+    db.subtasks.push(s);
+    saveDB(db);
+    return s;
+  },
+  toggleSubtask: (id) => {
+    const db = getDB();
+    const s = db.subtasks.find(s => s.id === id);
+    if (s) s.done = !s.done;
+    saveDB(db);
+  },
+  deleteSubtask: (id) => {
+    const db = getDB();
+    db.subtasks = db.subtasks.filter(s => s.id !== id);
+    saveDB(db);
+  },
+  createComment: (task_id, content, author = '山田 太郎') => {
+    const db = getDB();
+    const c = { id: uid(), task_id, author, content, created_at: now() };
+    db.comments.push(c);
+    saveDB(db);
+    return c;
+  },
+  deleteComment: (id) => {
+    const db = getDB();
+    db.comments = db.comments.filter(c => c.id !== id);
+    saveDB(db);
+  },
+  getDashboard: (project_id) => {
+    const tasks = DB.getTasks(project_id ? { project_id } : {});
+    const total = tasks.length;
+    const by_status = { '未着手': 0, '進行中': 0, 'レビュー中': 0, '完了': 0 };
+    const by_assignee = {};
+    let overdue = 0;
+    const now2 = new Date();
+    for (const t of tasks) {
+      by_status[t.status] = (by_status[t.status] || 0) + 1;
+      if (t.assignee) by_assignee[t.assignee] = (by_assignee[t.assignee] || 0) + 1;
+      if (t.due_date && new Date(t.due_date) < now2 && t.status !== '完了') overdue++;
+    }
+    const done = by_status['完了'] || 0;
+    return { total, by_status, by_assignee, overdue, completion_rate: total ? Math.round(done / total * 100 * 10) / 10 : 0 };
+  },
+};
+
+// ─── Constants ────────────────────────────────────────────────────────
+const STATUSES = ['未着手', '進行中', 'レビュー中', '完了'];
+const PRIORITIES = ['高', '中', '低'];
+const STATUS_STYLE = {
+  '未着手':    { bg: 'bg-gray-100',   text: 'text-gray-600',   dot: 'bg-gray-400',   colBg: '#f8fafc', border: '#cbd5e1' },
+  '進行中':    { bg: 'bg-blue-100',   text: 'text-blue-700',   dot: 'bg-blue-500',   colBg: '#eff6ff', border: '#93c5fd' },
+  'レビュー中': { bg: 'bg-amber-100', text: 'text-amber-700',  dot: 'bg-amber-500',  colBg: '#fffbeb', border: '#fcd34d' },
+  '完了':      { bg: 'bg-green-100',  text: 'text-green-700',  dot: 'bg-green-500',  colBg: '#f0fdf4', border: '#86efac' },
+};
+const PRI_STYLE = {
+  '高': { bg: 'bg-red-100',   text: 'text-red-700',   border: 'border-red-200' },
+  '中': { bg: 'bg-amber-100', text: 'text-amber-700', border: 'border-amber-200' },
+  '低': { bg: 'bg-green-100', text: 'text-green-700', border: 'border-green-200' },
+};
+const AVATAR_COLORS = ['#6366f1','#0ea5e9','#f59e0b','#10b981','#ec4899','#8b5cf6','#ef4444','#14b8a6'];
+function avatarColor(name = '') { let h = 0; for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) | 0; return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length]; }
+function initials(name = '') { const p = name.trim().split(/\s+/); return p.length >= 2 ? p[0][0] + p[1][0] : (name[0] || '?'); }
+function fmtDate(d) { if (!d) return null; const dt = new Date(d); return `${dt.getMonth()+1}月${dt.getDate()}日`; }
+function isOverdue(d, status) { return d && status !== '完了' && new Date(d) < new Date(); }
+
+// ─── UI Atoms ─────────────────────────────────────────────────────────
+function Avatar({ name, size = 24 }) {
+  return (
+    <div style={{ width: size, height: size, borderRadius: '50%', background: avatarColor(name), flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <span style={{ color: '#fff', fontSize: size * 0.38, fontWeight: 700, letterSpacing: '-0.5px' }}>{initials(name)}</span>
+    </div>
+  );
+}
+function PriBadge({ p }) {
+  const s = PRI_STYLE[p] || PRI_STYLE['中'];
+  return <span className={`text-xs font-bold px-1.5 py-0.5 rounded border ${s.bg} ${s.text} ${s.border}`}>{p}</span>;
+}
+function LabelPill({ label }) {
+  return <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100 font-medium">{label}</span>;
+}
+
+// ─── Task Card ────────────────────────────────────────────────────────
+function TaskCard({ task, onClick, selected }) {
+  const st = STATUS_STYLE[task.status] || STATUS_STYLE['未着手'];
+  const over = isOverdue(task.due_date, task.status);
+  const labels = (task.labels || '').split(',').map(l => l.trim()).filter(Boolean);
+  const pct = task.subtask_count ? Math.round(task.done_subtask_count / task.subtask_count * 100) : 0;
+  return (
+    <div
+      draggable
+      onDragStart={e => e.dataTransfer.setData('taskId', task.id)}
+      onClick={() => onClick(task.id)}
+      style={{ borderLeft: `4px solid ${st.border}` }}
+      className={`bg-white rounded-xl p-3.5 shadow-sm hover:shadow-md transition-all cursor-pointer ${selected ? 'ring-2 ring-indigo-400 ring-offset-1' : ''}`}
+    >
+      <div className="flex items-start gap-2 mb-2">
+        <p className={`flex-1 text-sm font-semibold leading-snug ${task.status === '完了' ? 'line-through text-gray-400' : 'text-gray-800'}`}>{task.title}</p>
+        <PriBadge p={task.priority} />
+      </div>
+      {labels.length > 0 && <div className="flex flex-wrap gap-1 mb-2">{labels.map(l => <LabelPill key={l} label={l} />)}</div>}
+      {task.subtask_count > 0 && (
+        <div className="mb-2">
+          <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+            <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${pct}%` }} />
+          </div>
+          <span className="text-xs text-gray-400 mt-0.5 block">{task.done_subtask_count}/{task.subtask_count}</span>
+        </div>
+      )}
+      <div className="flex items-center justify-between">
+        {task.assignee ? <Avatar name={task.assignee} size={22} /> : <span />}
+        {task.due_date && <span className={`text-xs font-medium ${over ? 'text-red-500' : 'text-gray-400'}`}>{fmtDate(task.due_date)}</span>}
+      </div>
+    </div>
+  );
+}
+
+// ─── Kanban Column ────────────────────────────────────────────────────
+function KanbanCol({ status, tasks, onDrop, onCard, onNew, selectedId }) {
+  const [over, setOver] = useState(false);
+  const st = STATUS_STYLE[status];
+  return (
+    <div className="kanban-col flex flex-col gap-3">
+      <div className="flex items-center justify-between px-1">
+        <div className="flex items-center gap-2">
+          <span className={`w-2.5 h-2.5 rounded-full ${st.dot}`} />
+          <span className="text-sm font-bold text-gray-700">{status}</span>
+          <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-full font-medium">{tasks.length}</span>
+        </div>
+        <button onClick={() => onNew(status)} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg text-xl leading-none transition-colors">+</button>
+      </div>
+      <div
+        className={`flex-1 min-h-20 rounded-xl p-2 flex flex-col gap-2 transition-colors ${over ? 'drag-over' : ''}`}
+        style={{ background: over ? undefined : st.colBg }}
+        onDragOver={e => { e.preventDefault(); setOver(true); }}
+        onDragLeave={() => setOver(false)}
+        onDrop={e => { e.preventDefault(); setOver(false); onDrop(e.dataTransfer.getData('taskId'), status); }}
+      >
+        {tasks.map(t => <TaskCard key={t.id} task={t} onClick={onCard} selected={selectedId === t.id} />)}
+      </div>
+      <button onClick={() => onNew(status)} className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-indigo-600 px-2 py-1 rounded-lg hover:bg-indigo-50 transition-colors">
+        <span className="text-lg leading-none">+</span> タスクを追加
+      </button>
+    </div>
+  );
+}
+
+// ─── List View ────────────────────────────────────────────────────────
+function ListRow({ task, onClick, selected }) {
+  const st = STATUS_STYLE[task.status] || STATUS_STYLE['未着手'];
+  return (
+    <tr onClick={() => onClick(task.id)} className={`border-b border-gray-100 cursor-pointer transition-colors ${selected ? 'bg-indigo-50' : 'hover:bg-gray-50'}`}>
+      <td className="px-4 py-3">
+        <div className="flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full shrink-0 ${st.dot}`} />
+          <span className={`text-sm font-medium ${task.status === '完了' ? 'line-through text-gray-400' : 'text-gray-800'}`}>{task.title}</span>
+        </div>
+      </td>
+      <td className="px-3 py-3 hidden sm:table-cell"><span className={`text-xs px-2 py-0.5 rounded-full font-medium ${st.bg} ${st.text}`}>{task.status}</span></td>
+      <td className="px-3 py-3 hidden md:table-cell"><PriBadge p={task.priority} /></td>
+      <td className="px-3 py-3 hidden md:table-cell">
+        {task.assignee ? <div className="flex items-center gap-1.5"><Avatar name={task.assignee} size={20} /><span className="text-xs text-gray-600">{task.assignee}</span></div> : <span className="text-gray-300 text-xs">—</span>}
+      </td>
+      <td className={`px-3 py-3 hidden lg:table-cell text-xs font-medium ${isOverdue(task.due_date, task.status) ? 'text-red-500' : 'text-gray-400'}`}>{fmtDate(task.due_date) || '—'}</td>
+    </tr>
+  );
+}
+
+// ─── Task Form Modal ──────────────────────────────────────────────────
+function TaskFormModal({ task, projects, defaultStatus, onSave, onClose }) {
+  const [form, setForm] = useState({
+    project_id: task?.project_id ?? (projects[0]?.id ?? ''),
+    title: task?.title ?? '',
+    description: task?.description ?? '',
+    status: task?.status ?? defaultStatus ?? '未着手',
+    priority: task?.priority ?? '中',
+    assignee: task?.assignee ?? '',
+    labels: task?.labels ?? '',
+    due_date: task?.due_date ? task.due_date.slice(0, 10) : '',
+  });
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const inp = "w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white transition-shadow";
+
+  function submit(e) {
+    e.preventDefault();
+    if (!form.title.trim()) return;
+    const data = { ...form, due_date: form.due_date || null, description: form.description || '', assignee: form.assignee || '', labels: form.labels || '' };
+    if (task?.id) DB.updateTask(task.id, data);
+    else DB.createTask(data);
+    onSave();
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <h2 className="font-bold text-gray-800 text-base">{task?.id ? 'タスクを編集' : '新しいタスク'}</h2>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-xl hover:bg-gray-100 text-gray-400 text-2xl leading-none">&times;</button>
+        </div>
+        <form onSubmit={submit} className="p-6 space-y-4 overflow-y-auto flex-1">
+          <div>
+            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">タイトル *</label>
+            <input className={inp} value={form.title} onChange={e => set('title', e.target.value)} required placeholder="タスクのタイトルを入力" autoFocus />
+          </div>
+          <div>
+            <label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">説明</label>
+            <textarea className={inp} rows={3} value={form.description} onChange={e => set('description', e.target.value)} placeholder="詳細説明（任意）" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">ステータス</label>
+              <select className={inp} value={form.status} onChange={e => set('status', e.target.value)}>{STATUSES.map(s => <option key={s}>{s}</option>)}</select></div>
+            <div><label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">優先度</label>
+              <select className={inp} value={form.priority} onChange={e => set('priority', e.target.value)}>{PRIORITIES.map(p => <option key={p}>{p}</option>)}</select></div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">担当者</label>
+              <input className={inp} value={form.assignee} onChange={e => set('assignee', e.target.value)} placeholder="担当者名" /></div>
+            <div><label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">期限</label>
+              <input type="date" className={inp} value={form.due_date} onChange={e => set('due_date', e.target.value)} /></div>
+          </div>
+          <div><label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">ラベル</label>
+            <input className={inp} value={form.labels} onChange={e => set('labels', e.target.value)} placeholder="デザイン, コーディング（カンマ区切り）" /></div>
+          <div><label className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1.5 block">プロジェクト</label>
+            <select className={inp} value={form.project_id} onChange={e => set('project_id', e.target.value)}>{projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 py-3 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 font-semibold">キャンセル</button>
+            <button type="submit" className="flex-1 py-3 rounded-xl bg-indigo-600 text-white text-sm hover:bg-indigo-700 font-bold transition-colors">保存する</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ─── Task Detail Panel ────────────────────────────────────────────────
+function DetailPanel({ taskId, projects, onClose, onEdit, onDeleted, refresh }) {
+  const [task, setTask] = useState(null);
+  const [newSub, setNewSub] = useState('');
+  const [comment, setComment] = useState('');
+  const [delConf, setDelConf] = useState(false);
+
+  const load = useCallback(() => setTask(DB.getTask(taskId)), [taskId]);
+  useEffect(() => { load(); }, [load, refresh]);
+
+  if (!task) return <div className="w-80 shrink-0 bg-white border-l flex items-center justify-center"><span className="text-gray-400 text-sm">読み込み中…</span></div>;
+
+  const st = STATUS_STYLE[task.status] || STATUS_STYLE['未着手'];
+  const project = projects.find(p => p.id === task.project_id);
+  const labels = (task.labels || '').split(',').map(l => l.trim()).filter(Boolean);
+  const doneSubs = task.subtasks.filter(s => s.done).length;
+  const pct = task.subtasks.length ? Math.round(doneSubs / task.subtasks.length * 100) : 0;
+
+  function addSub() { if (!newSub.trim()) return; DB.createSubtask(task.id, newSub); setNewSub(''); load(); refresh(); }
+  function postComment() { if (!comment.trim()) return; DB.createComment(task.id, comment); setComment(''); load(); }
+  function delTask() { DB.deleteTask(task.id); onDeleted(); }
+
+  const Field = ({ label, children }) => (
+    <div className="flex items-start gap-3 py-2.5 border-b border-gray-50">
+      <span className="text-xs text-gray-400 w-16 shrink-0 pt-0.5 font-medium">{label}</span>
+      <div className="flex-1 text-xs text-gray-700">{children}</div>
+    </div>
+  );
+
+  return (
+    <div className="w-80 shrink-0 bg-white border-l border-gray-200 flex flex-col overflow-hidden panel-enter" style={{ minWidth: '320px' }}>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+        <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">タスク詳細</span>
+        <div className="flex items-center gap-1">
+          <button onClick={onEdit} className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 font-medium">編集</button>
+          {delConf
+            ? <><button onClick={delTask} className="text-xs px-2.5 py-1 rounded-lg bg-red-500 text-white hover:bg-red-600 font-medium">確認</button>
+                <button onClick={() => setDelConf(false)} className="text-xs px-2 py-1 rounded-lg border hover:bg-gray-50">✕</button></>
+            : <button onClick={() => setDelConf(true)} className="text-xs px-2.5 py-1 rounded-lg border border-red-200 text-red-500 hover:bg-red-50 font-medium">削除</button>
+          }
+          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-400 text-xl leading-none ml-1">&times;</button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        <div className="px-4 py-4 border-b border-gray-100">
+          <p className="text-sm font-bold text-gray-900 leading-snug">{task.title}</p>
+        </div>
+        <div className="px-4 py-1">
+          <Field label="担当者">{task.assignee ? <div className="flex items-center gap-1.5"><Avatar name={task.assignee} size={18} />{task.assignee}</div> : <span className="text-gray-300">未設定</span>}</Field>
+          <Field label="期限">{task.due_date ? <span className={isOverdue(task.due_date, task.status) ? 'text-red-500 font-semibold' : ''}>{fmtDate(task.due_date)}{isOverdue(task.due_date, task.status) ? ' ⚠' : ''}</span> : <span className="text-gray-300">未設定</span>}</Field>
+          <Field label="プロジェクト"><span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm inline-block shrink-0" style={{ background: project?.color }} />{project?.name}</span></Field>
+          <Field label="ステータス"><span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${st.bg} ${st.text}`}>{task.status}</span></Field>
+          <Field label="優先度"><PriBadge p={task.priority} /></Field>
+          {labels.length > 0 && <Field label="ラベル"><div className="flex flex-wrap gap-1">{labels.map(l => <LabelPill key={l} label={l} />)}</div></Field>}
+        </div>
+
+        {task.description && (
+          <div className="px-4 py-3 border-t border-gray-100">
+            <p className="text-xs font-bold text-gray-500 mb-1.5">説明</p>
+            <p className="text-xs text-gray-700 bg-gray-50 rounded-xl p-3 whitespace-pre-wrap leading-relaxed">{task.description}</p>
+          </div>
+        )}
+
+        {task.subtasks.length > 0 && (
+          <div className="px-4 py-3 border-t border-gray-100">
+            <div className="flex justify-between mb-1.5">
+              <p className="text-xs font-bold text-gray-500">進捗</p>
+              <span className="text-xs text-gray-400 font-medium">{pct}%</span>
+            </div>
+            <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+              <div className="h-full bg-indigo-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
+            </div>
+          </div>
+        )}
+
+        <div className="px-4 py-3 border-t border-gray-100">
+          <p className="text-xs font-bold text-gray-500 mb-2">チェックリスト {task.subtasks.length > 0 && <span className="font-normal text-gray-400">({doneSubs}/{task.subtasks.length})</span>}</p>
+          <div className="space-y-2 mb-2">
+            {task.subtasks.map(s => (
+              <div key={s.id} className="flex items-center gap-2 group">
+                <input type="checkbox" checked={s.done} onChange={() => { DB.toggleSubtask(s.id); load(); refresh(); }} className="rounded border-gray-300 text-indigo-600 cursor-pointer" />
+                <span className={`flex-1 text-xs ${s.done ? 'line-through text-gray-400' : 'text-gray-700'}`}>{s.title}</span>
+                <button onClick={() => { DB.deleteSubtask(s.id); load(); refresh(); }} className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 text-sm">×</button>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input className="flex-1 border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200"
+              value={newSub} onChange={e => setNewSub(e.target.value)} onKeyDown={e => e.key === 'Enter' && addSub()} placeholder="＋ 項目を追加…" />
+            <button onClick={addSub} className="text-xs px-2.5 py-1.5 bg-indigo-50 text-indigo-600 rounded-xl hover:bg-indigo-100 font-semibold">追加</button>
+          </div>
+        </div>
+
+        <div className="px-4 py-3 border-t border-gray-100">
+          <p className="text-xs font-bold text-gray-500 mb-2">コメント {task.comments.length > 0 && <span className="font-normal text-gray-400">({task.comments.length})</span>}</p>
+          {task.comments.map(c => (
+            <div key={c.id} className="flex gap-2 mb-3 group">
+              <Avatar name={c.author} size={22} />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-baseline gap-1 justify-between">
+                  <span className="text-xs font-bold text-gray-700">{c.author}</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs text-gray-400">{new Date(c.created_at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                    <button onClick={() => { DB.deleteComment(c.id); load(); }} className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 text-xs">×</button>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-600 mt-0.5 whitespace-pre-wrap">{c.content}</p>
+              </div>
+            </div>
+          ))}
+          <div className="flex gap-2 mt-1">
+            <Avatar name="山田 太郎" size={22} />
+            <div className="flex-1 flex gap-1">
+              <input className="flex-1 border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                value={comment} onChange={e => setComment(e.target.value)} onKeyDown={e => e.key === 'Enter' && !e.shiftKey && postComment()} placeholder="コメントを追加…" />
+              <button onClick={postComment} className="text-xs px-2.5 py-1.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 font-bold">投稿</button>
+            </div>
+          </div>
+        </div>
+        <div className="px-4 py-3 border-t border-gray-100"><p className="text-xs text-gray-300">更新: {new Date(task.updated_at).toLocaleString('ja-JP')}</p></div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Dashboard ────────────────────────────────────────────────────────
+function DashboardView({ projects, activeProjectId }) {
+  const data = useMemo(() => DB.getDashboard(activeProjectId), [activeProjectId]);
+  const cards = [
+    { label: '総タスク数', value: data.total, cls: 'text-indigo-600', bg: 'bg-indigo-50 border-indigo-100' },
+    { label: '完了率', value: `${data.completion_rate}%`, cls: 'text-green-600', bg: 'bg-green-50 border-green-100' },
+    { label: '期限超過', value: data.overdue, cls: 'text-red-500', bg: 'bg-red-50 border-red-100' },
+    { label: '進行中', value: data.by_status['進行中'] || 0, cls: 'text-blue-600', bg: 'bg-blue-50 border-blue-100' },
+  ];
+  return (
+    <div className="p-6 max-w-4xl">
+      <h2 className="text-xl font-bold text-gray-800 mb-6">ダッシュボード</h2>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        {cards.map(c => <div key={c.label} className={`${c.bg} border rounded-2xl p-5`}><p className="text-xs text-gray-500 mb-1 font-medium">{c.label}</p><p className={`text-3xl font-bold ${c.cls}`}>{c.value}</p></div>)}
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="bg-white border border-gray-100 rounded-2xl p-5">
+          <h3 className="text-sm font-bold text-gray-700 mb-4">ステータス別</h3>
+          <div className="space-y-3">
+            {STATUSES.map(s => { const cnt = data.by_status[s] || 0; const pct = data.total ? Math.round(cnt / data.total * 100) : 0; const st = STATUS_STYLE[s]; return (
+              <div key={s} className="flex items-center gap-3">
+                <div className="flex items-center gap-1.5 w-20 shrink-0"><span className={`w-2 h-2 rounded-full ${st.dot}`} /><span className="text-xs text-gray-600 font-medium">{s}</span></div>
+                <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden"><div className={`h-full rounded-full ${st.dot}`} style={{ width: `${pct}%` }} /></div>
+                <span className="text-xs font-bold text-gray-500 w-5 text-right">{cnt}</span>
+              </div>
+            ); })}
+          </div>
+        </div>
+        {Object.keys(data.by_assignee).length > 0 && (
+          <div className="bg-white border border-gray-100 rounded-2xl p-5">
+            <h3 className="text-sm font-bold text-gray-700 mb-4">担当者別</h3>
+            <div className="space-y-3">
+              {Object.entries(data.by_assignee).sort((a, b) => b[1] - a[1]).map(([name, cnt]) => {
+                const max = Math.max(...Object.values(data.by_assignee));
+                return <div key={name} className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5 w-24 shrink-0"><Avatar name={name} size={18} /><span className="text-xs text-gray-600 truncate font-medium">{name.split(' ')[0]}</span></div>
+                  <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-indigo-400 rounded-full" style={{ width: `${cnt / max * 100}%` }} /></div>
+                  <span className="text-xs font-bold text-gray-500 w-4 text-right">{cnt}</span>
+                </div>;
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Sidebar ──────────────────────────────────────────────────────────
+function Sidebar({ projects, activeProjectId, onSelect, reload, onProjectDeleted, view, onView }) {
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newColor, setNewColor] = useState('#6366f1');
+  const COLORS = ['#6366f1','#0ea5e9','#f59e0b','#10b981','#ec4899','#ef4444'];
+
+  function addProject() {
+    if (!newName.trim()) return;
+    DB.createProject({ name: newName, color: newColor });
+    setNewName(''); setNewColor('#6366f1'); setAdding(false);
+    reload();
+  }
+
+  const navItems = [
+    { id: 'dashboard', label: 'ダッシュボード', icon: '📊' },
+    { id: 'board',     label: 'ボード',         icon: '⬛' },
+    { id: 'list',      label: 'リスト',         icon: '☰' },
+  ];
+
+  return (
+    <div className="w-52 shrink-0 bg-white border-r border-gray-100 flex flex-col h-full" style={{ boxShadow: '1px 0 0 #f1f5f9' }}>
+      <div className="px-4 py-4 border-b border-gray-100">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center shadow-sm">
+            <span className="text-white font-black text-sm">T</span>
+          </div>
+          <span className="font-black text-gray-900 text-sm tracking-tight">TaskFlow Pro</span>
+        </div>
+      </div>
+      <div className="px-3 pt-3">
+        <button onClick={() => { onView('board'); }} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-bold py-2.5 rounded-xl transition-colors flex items-center justify-center gap-1.5 shadow-sm">
+          <span className="text-base leading-none">+</span> 新しいタスク
+        </button>
+      </div>
+      <div className="px-2 pt-3 space-y-0.5">
+        {navItems.map(n => (
+          <button key={n.id} onClick={() => onView(n.id)}
+            className={`w-full text-left px-3 py-2 rounded-xl text-sm flex items-center gap-2.5 transition-colors font-medium ${view === n.id ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 hover:bg-gray-50'}`}>
+            <span>{n.icon}</span>{n.label}
+          </button>
+        ))}
+      </div>
+      <div className="px-3 mt-4 mb-1 flex items-center justify-between">
+        <span className="text-xs font-black text-gray-400 uppercase tracking-widest">プロジェクト</span>
+        <button onClick={() => setAdding(v => !v)} className="w-5 h-5 flex items-center justify-center text-gray-400 hover:text-indigo-600 text-lg leading-none">+</button>
+      </div>
+      {adding && (
+        <div className="px-3 mb-2 space-y-1.5">
+          <input autoFocus className="w-full border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200"
+            value={newName} onChange={e => setNewName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' ? addProject() : e.key === 'Escape' && setAdding(false)}
+            placeholder="プロジェクト名 (Enter)" />
+          <div className="flex gap-1.5">
+            {COLORS.map(c => <button key={c} onClick={() => setNewColor(c)}
+              className={`w-5 h-5 rounded-full transition-transform ${newColor === c ? 'scale-125 ring-2 ring-offset-1 ring-gray-400' : 'hover:scale-110'}`}
+              style={{ background: c }} />)}
+          </div>
+        </div>
+      )}
+      <div className="flex-1 overflow-y-auto px-2 pb-3 space-y-0.5">
+        <button onClick={() => onSelect(null)}
+          className={`w-full text-left px-3 py-2 rounded-xl text-sm font-medium transition-colors ${!activeProjectId ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 hover:bg-gray-50'}`}>
+          すべて
+        </button>
+        {projects.map(p => (
+          <div key={p.id} className="group flex items-center">
+            <button onClick={() => onSelect(p.id)}
+              className={`flex-1 min-w-0 text-left px-3 py-2 rounded-xl text-sm font-medium transition-colors flex items-center gap-2 ${activeProjectId === p.id ? 'bg-indigo-50 text-indigo-700' : 'text-gray-600 hover:bg-gray-50'}`}>
+              <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: p.color }} />
+              <span className="truncate">{p.name}</span>
+              <span className="text-xs text-gray-400 ml-auto shrink-0">{DB.getTasks({ project_id: p.id }).length}</span>
+            </button>
+            <button onClick={() => onProjectDeleted(p.id)} className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 px-1 text-sm leading-none">×</button>
+          </div>
+        ))}
+      </div>
+      <div className="px-3 py-3 border-t border-gray-100 flex items-center gap-2">
+        <Avatar name="山田 太郎" size={28} />
+        <div className="min-w-0"><p className="text-xs font-bold text-gray-700 truncate">山田 太郎</p><p className="text-xs text-gray-400 truncate">yamada@example.com</p></div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Filter Bar ───────────────────────────────────────────────────────
+function FilterBar({ filters, onChange, assignees }) {
+  const inp = "border border-gray-200 rounded-xl px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 bg-white text-gray-700 font-medium";
+  const has = filters.q || filters.status || filters.priority || filters.assignee;
+  return (
+    <div className="flex items-center flex-wrap gap-2 px-6 py-3 bg-white border-b border-gray-100">
+      <input className={`${inp} w-48`} placeholder="🔍 タスクを検索…" value={filters.q} onChange={e => onChange({ ...filters, q: e.target.value })} />
+      <select className={inp} value={filters.assignee} onChange={e => onChange({ ...filters, assignee: e.target.value })}>
+        <option value="">👤 担当者</option>{assignees.map(a => <option key={a}>{a}</option>)}
+      </select>
+      <select className={inp} value={filters.status} onChange={e => onChange({ ...filters, status: e.target.value })}>
+        <option value="">ステータス</option>{STATUSES.map(s => <option key={s}>{s}</option>)}
+      </select>
+      <select className={inp} value={filters.priority} onChange={e => onChange({ ...filters, priority: e.target.value })}>
+        <option value="">優先度</option>{PRIORITIES.map(p => <option key={p}>{p}</option>)}
+      </select>
+      {has && <button onClick={() => onChange({ q: '', status: '', priority: '', assignee: '' })}
+        className="text-xs text-indigo-600 hover:text-indigo-800 px-3 py-1.5 hover:bg-indigo-50 rounded-xl font-bold transition-colors">フィルターをクリア</button>}
+    </div>
+  );
+}
+
+// ─── App ──────────────────────────────────────────────────────────────
+function App() {
+  const [tick, setTick] = useState(0);
+  const refresh = useCallback(() => setTick(t => t + 1), []);
+
+  const [activeProjectId, setActiveProjectId] = useState(null);
+  const [view, setView] = useState('board');
+  const [filters, setFilters] = useState({ q: '', status: '', priority: '', assignee: '' });
+  const [selectedId, setSelectedId] = useState(null);
+  const [taskForm, setTaskForm] = useState(null);
+
+  const projects = useMemo(() => DB.getProjects(), [tick]);
+  const tasks = useMemo(() => DB.getTasks({ project_id: activeProjectId || undefined, ...filters }), [tick, activeProjectId, filters]);
+  const assignees = useMemo(() => [...new Set(DB.getTasks({ project_id: activeProjectId || undefined }).map(t => t.assignee).filter(Boolean))], [tick, activeProjectId]);
+
+  const activeProject = projects.find(p => p.id === activeProjectId);
+
+  function handleDrop(taskId, newStatus) {
+    DB.updateTask(taskId, { status: newStatus });
+    refresh();
+  }
+  function deleteProject(id) {
+    if (!confirm('このプロジェクトと全タスクを削除しますか？')) return;
+    DB.deleteProject(id);
+    if (activeProjectId === id) setActiveProjectId(null);
+    refresh();
+  }
+
+  const tabs = [{ id: 'dashboard', label: '概要' }, { id: 'board', label: 'ボード' }, { id: 'list', label: 'リスト' }];
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-gray-50">
+      <Sidebar
+        projects={projects}
+        activeProjectId={activeProjectId}
+        onSelect={id => { setActiveProjectId(id); setSelectedId(null); }}
+        reload={refresh}
+        onProjectDeleted={deleteProject}
+        view={view}
+        onView={v => { setView(v); setSelectedId(null); }}
+      />
+
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {/* Header */}
+        <div className="bg-white border-b border-gray-100 px-6 pt-4 pb-0">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-3">
+              {activeProject && <span className="w-3 h-3 rounded-sm shrink-0" style={{ background: activeProject.color }} />}
+              <h1 className="text-lg font-black text-gray-900">{activeProject?.name ?? 'すべてのタスク'}</h1>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="flex -space-x-1.5">
+                {['山田 太郎','鈴木 一郎','佐藤 花子','田中 美咲'].map(n => (
+                  <div key={n} className="ring-2 ring-white rounded-full"><Avatar name={n} size={28} /></div>
+                ))}
+              </div>
+              <button onClick={() => setTaskForm({})} className="px-4 py-2 bg-indigo-600 text-white text-sm font-bold rounded-xl hover:bg-indigo-700 transition-colors shadow-sm">
+                + 新しいタスク
+              </button>
+            </div>
+          </div>
+          <div className="flex">
+            {tabs.map(t => (
+              <button key={t.id} onClick={() => setView(t.id)}
+                className={`px-4 py-2.5 text-sm font-semibold border-b-2 -mb-px transition-colors ${view === t.id ? 'tab-active' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {view !== 'dashboard' && <FilterBar filters={filters} onChange={f => { setFilters(f); }} assignees={assignees} />}
+
+        <div className="flex-1 flex min-h-0 overflow-hidden">
+          <div className="flex-1 overflow-auto">
+            {view === 'dashboard' && <DashboardView projects={projects} activeProjectId={activeProjectId} />}
+
+            {view === 'board' && (
+              <div className="p-6">
+                <div className="flex gap-5 pb-6" style={{ minHeight: 'calc(100vh - 230px)', overflowX: 'auto' }}>
+                  {STATUSES.map(s => (
+                    <KanbanCol key={s} status={s}
+                      tasks={tasks.filter(t => t.status === s)}
+                      onDrop={handleDrop}
+                      onCard={id => { setSelectedId(prev => prev === id ? null : id); }}
+                      onNew={st => setTaskForm({ defaultStatus: st })}
+                      selectedId={selectedId}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {view === 'list' && (
+              <div className="p-6">
+                {tasks.length === 0
+                  ? <div className="text-center py-20 text-gray-400"><p className="text-5xl mb-4">📋</p><p className="font-semibold">タスクがありません</p><button onClick={() => setTaskForm({})} className="mt-4 px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl text-sm hover:bg-indigo-100 font-bold">最初のタスクを追加</button></div>
+                  : <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
+                      <table className="w-full">
+                        <thead className="bg-gray-50 border-b border-gray-100">
+                          <tr>
+                            <th className="text-left px-4 py-3 text-xs font-black text-gray-500 uppercase tracking-wide">タスク名</th>
+                            <th className="text-left px-3 py-3 text-xs font-black text-gray-500 uppercase tracking-wide hidden sm:table-cell">ステータス</th>
+                            <th className="text-left px-3 py-3 text-xs font-black text-gray-500 uppercase tracking-wide hidden md:table-cell">優先度</th>
+                            <th className="text-left px-3 py-3 text-xs font-black text-gray-500 uppercase tracking-wide hidden md:table-cell">担当者</th>
+                            <th className="text-left px-3 py-3 text-xs font-black text-gray-500 uppercase tracking-wide hidden lg:table-cell">期限</th>
+                          </tr>
+                        </thead>
+                        <tbody>{tasks.map(t => <ListRow key={t.id} task={t} onClick={id => setSelectedId(prev => prev === id ? null : id)} selected={selectedId === t.id} />)}</tbody>
+                      </table>
+                    </div>
+                }
+              </div>
+            )}
+          </div>
+
+          {selectedId && (
+            <DetailPanel
+              key={selectedId}
+              taskId={selectedId}
+              projects={projects}
+              onClose={() => setSelectedId(null)}
+              onEdit={() => { const t = tasks.find(x => x.id === selectedId); if (t) setTaskForm({ task: DB.getTask(selectedId) }); }}
+              onDeleted={() => { setSelectedId(null); refresh(); }}
+              refresh={tick}
+            />
+          )}
+        </div>
+      </div>
+
+      {taskForm !== null && (
+        <TaskFormModal
+          task={taskForm.task ?? null}
+          defaultStatus={taskForm.defaultStatus ?? null}
+          projects={projects}
+          onSave={() => { setTaskForm(null); refresh(); }}
+          onClose={() => setTaskForm(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
