@@ -1,0 +1,876 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaskFlow Pro</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f4f5f7; }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+    .kanban-col { min-width: 260px; max-width: 260px; }
+    .drag-over { outline: 2px dashed #6366f1; background: #eef2ff !important; border-radius: 12px; }
+    [draggable] { cursor: grab; }
+    [draggable]:active { cursor: grabbing; }
+    .task-dragging { opacity: 0.4; }
+    .panel-enter { animation: slideIn .18s ease; }
+    @keyframes slideIn { from { transform: translateX(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+    .tab-active { border-bottom: 2px solid #6366f1; color: #6366f1; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useCallback, useRef } = React;
+
+// ── API ───────────────────────────────────────────────────────────────
+const API = window.location.hostname === 'localhost' ? 'http://localhost:8000' : '';
+async function api(path, opts = {}) {
+  const res = await fetch(API + path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  if (res.status === 204) return null;
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Error'); }
+  return res.json();
+}
+
+// ── Constants ─────────────────────────────────────────────────────────
+const STATUSES = ['未着手', '進行中', 'レビュー中', '完了'];
+const PRIORITIES = ['高', '中', '低'];
+
+const STATUS_STYLE = {
+  '未着手':  { bg: 'bg-gray-100',   text: 'text-gray-600',   dot: 'bg-gray-400',   col: 'bg-gray-50',   border: 'border-gray-300' },
+  '進行中':  { bg: 'bg-blue-100',   text: 'text-blue-700',   dot: 'bg-blue-500',   col: 'bg-blue-50/40', border: 'border-blue-400' },
+  'レビュー中': { bg: 'bg-amber-100', text: 'text-amber-700', dot: 'bg-amber-500', col: 'bg-amber-50/40', border: 'border-amber-400' },
+  '完了':    { bg: 'bg-green-100',  text: 'text-green-700',  dot: 'bg-green-500',  col: 'bg-green-50/40', border: 'border-green-400' },
+};
+const PRI_STYLE = {
+  '高': { bg: 'bg-red-100',    text: 'text-red-700',    border: 'border-red-200' },
+  '中': { bg: 'bg-amber-100',  text: 'text-amber-700',  border: 'border-amber-200' },
+  '低': { bg: 'bg-green-100',  text: 'text-green-700',  border: 'border-green-200' },
+};
+const AVATAR_COLORS = ['#6366f1','#0ea5e9','#f59e0b','#10b981','#ec4899','#8b5cf6','#14b8a6','#f97316'];
+function avatarColor(name) {
+  if (!name) return '#94a3b8';
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) & 0xffffffff;
+  return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
+}
+function initials(name) {
+  if (!name) return '?';
+  const parts = name.trim().split(/\s+/);
+  return parts.length >= 2 ? parts[0][0] + parts[1][0] : name[0];
+}
+function fmtDate(d) {
+  if (!d) return null;
+  const dt = new Date(d);
+  return `${dt.getMonth() + 1}月${dt.getDate()}日`;
+}
+function isOverdue(d, status) {
+  if (!d || status === '完了') return false;
+  return new Date(d) < new Date();
+}
+
+// ── Avatar ────────────────────────────────────────────────────────────
+function Avatar({ name, size = 24 }) {
+  return (
+    <div style={{ width: size, height: size, borderRadius: '50%', background: avatarColor(name), flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <span style={{ color: '#fff', fontSize: size * 0.38, fontWeight: 600, letterSpacing: '-0.5px' }}>{initials(name)}</span>
+    </div>
+  );
+}
+
+// ── Priority Badge ────────────────────────────────────────────────────
+function PriBadge({ priority }) {
+  const s = PRI_STYLE[priority] || PRI_STYLE['中'];
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold border ${s.bg} ${s.text} ${s.border}`}>{priority}</span>
+  );
+}
+
+// ── Label Badge ───────────────────────────────────────────────────────
+function LabelBadge({ label }) {
+  return (
+    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-50 text-indigo-700 border border-indigo-100">{label}</span>
+  );
+}
+
+// ── Task Card (Kanban) ────────────────────────────────────────────────
+function TaskCard({ task, onClick, isSelected }) {
+  const s = STATUS_STYLE[task.status] || STATUS_STYLE['未着手'];
+  const dateOk = task.due_date && isOverdue(task.due_date, task.status);
+  const hasSubs = task.subtask_count > 0;
+  const pct = hasSubs ? Math.round(task.done_subtask_count / task.subtask_count * 100) : 0;
+  const labels = task.labels ? task.labels.split(',').map(l => l.trim()).filter(Boolean) : [];
+
+  return (
+    <div
+      draggable
+      onDragStart={e => e.dataTransfer.setData('taskId', String(task.id))}
+      onClick={() => onClick(task.id)}
+      className={`bg-white rounded-xl p-3.5 shadow-sm hover:shadow-md transition-all cursor-pointer border-l-4 ${s.border} ${isSelected ? 'ring-2 ring-indigo-400' : ''}`}
+    >
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <p className={`text-sm font-medium leading-snug flex-1 ${task.status === '完了' ? 'line-through text-gray-400' : 'text-gray-800'}`}>{task.title}</p>
+        <PriBadge priority={task.priority} />
+      </div>
+
+      {labels.length > 0 && (
+        <div className="flex flex-wrap gap-1 mb-2">
+          {labels.map(l => <LabelBadge key={l} label={l} />)}
+        </div>
+      )}
+
+      {hasSubs && (
+        <div className="mb-2">
+          <div className="flex justify-between items-center mb-0.5">
+            <span className="text-xs text-gray-400">{task.done_subtask_count}/{task.subtask_count}</span>
+          </div>
+          <div className="h-1 bg-gray-100 rounded-full overflow-hidden">
+            <div className="h-full bg-indigo-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center justify-between mt-2">
+        {task.assignee ? <Avatar name={task.assignee} size={22} /> : <span />}
+        {task.due_date && (
+          <span className={`text-xs font-medium ${dateOk ? 'text-red-500' : 'text-gray-400'}`}>
+            {fmtDate(task.due_date)}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Kanban Column ─────────────────────────────────────────────────────
+function KanbanColumn({ status, tasks, onDrop, onCard, onNewTask, selectedId }) {
+  const [over, setOver] = useState(false);
+  const s = STATUS_STYLE[status] || STATUS_STYLE['未着手'];
+  return (
+    <div className="kanban-col flex flex-col gap-3">
+      <div className="flex items-center justify-between px-1">
+        <div className="flex items-center gap-2">
+          <span className={`w-2.5 h-2.5 rounded-full ${s.dot}`} />
+          <span className="text-sm font-semibold text-gray-700">{status}</span>
+          <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-full">{tasks.length}</span>
+        </div>
+        <button onClick={() => onNewTask(status)} className="w-6 h-6 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded transition-colors text-lg leading-none">+</button>
+      </div>
+
+      <div
+        className={`flex-1 min-h-[80px] rounded-xl p-2 flex flex-col gap-2 transition-colors ${over ? 'drag-over' : s.col}`}
+        onDragOver={e => { e.preventDefault(); setOver(true); }}
+        onDragLeave={() => setOver(false)}
+        onDrop={e => { e.preventDefault(); setOver(false); onDrop(e.dataTransfer.getData('taskId'), status); }}
+      >
+        {tasks.map(t => (
+          <TaskCard key={t.id} task={t} onClick={onCard} isSelected={selectedId === t.id} />
+        ))}
+      </div>
+
+      <button onClick={() => onNewTask(status)} className="flex items-center gap-1.5 text-sm text-gray-400 hover:text-indigo-600 px-2 py-1 rounded-lg hover:bg-indigo-50 transition-colors w-full">
+        <span className="text-lg leading-none">+</span> タスクを追加
+      </button>
+    </div>
+  );
+}
+
+// ── List View Row ─────────────────────────────────────────────────────
+function ListRow({ task, onClick, isSelected }) {
+  const s = STATUS_STYLE[task.status] || STATUS_STYLE['未着手'];
+  return (
+    <tr
+      onClick={() => onClick(task.id)}
+      className={`hover:bg-indigo-50/40 cursor-pointer transition-colors border-b border-gray-100 ${isSelected ? 'bg-indigo-50' : ''}`}
+    >
+      <td className="px-4 py-2.5">
+        <div className="flex items-center gap-2">
+          <span className={`w-2 h-2 rounded-full shrink-0 ${s.dot}`} />
+          <span className={`text-sm font-medium ${task.status === '完了' ? 'line-through text-gray-400' : 'text-gray-800'}`}>{task.title}</span>
+        </div>
+      </td>
+      <td className="px-3 py-2.5 hidden sm:table-cell">
+        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${s.bg} ${s.text}`}>{task.status}</span>
+      </td>
+      <td className="px-3 py-2.5 hidden md:table-cell"><PriBadge priority={task.priority} /></td>
+      <td className="px-3 py-2.5 hidden md:table-cell">
+        {task.assignee ? (
+          <div className="flex items-center gap-2">
+            <Avatar name={task.assignee} size={20} />
+            <span className="text-xs text-gray-600">{task.assignee}</span>
+          </div>
+        ) : <span className="text-gray-300 text-xs">—</span>}
+      </td>
+      <td className={`px-3 py-2.5 hidden lg:table-cell text-xs font-medium ${isOverdue(task.due_date, task.status) ? 'text-red-500' : 'text-gray-400'}`}>
+        {fmtDate(task.due_date) || '—'}
+      </td>
+    </tr>
+  );
+}
+
+// ── Task Form Modal ───────────────────────────────────────────────────
+function TaskFormModal({ task, projects, defaultStatus, onSave, onClose }) {
+  const [form, setForm] = useState({
+    project_id: task?.project_id ?? (projects[0]?.id ?? ''),
+    title: task?.title ?? '',
+    description: task?.description ?? '',
+    status: task?.status ?? defaultStatus ?? '未着手',
+    priority: task?.priority ?? '中',
+    assignee: task?.assignee ?? '',
+    labels: task?.labels ?? '',
+    due_date: task?.due_date ? task.due_date.slice(0, 10) : '',
+  });
+  const [saving, setSaving] = useState(false);
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const inp = "w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white";
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!form.title.trim()) return;
+    setSaving(true);
+    const body = { ...form, project_id: Number(form.project_id), due_date: form.due_date || null, description: form.description || null, assignee: form.assignee || null, labels: form.labels || null };
+    try {
+      if (task?.id) await api(`/api/tasks/${task.id}`, { method: 'PUT', body });
+      else await api('/api/tasks', { method: 'POST', body });
+      onSave();
+    } finally { setSaving(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <h2 className="font-semibold text-gray-800">{task?.id ? 'タスクを編集' : '新しいタスク'}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none w-8 h-8 flex items-center justify-center rounded-lg hover:bg-gray-100">&times;</button>
+        </div>
+        <form onSubmit={submit} className="p-6 space-y-4 overflow-y-auto flex-1">
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">タイトル *</label>
+            <input className={inp} value={form.title} onChange={e => set('title', e.target.value)} required placeholder="タスクのタイトルを入力" autoFocus />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">説明</label>
+            <textarea className={inp} rows={3} value={form.description} onChange={e => set('description', e.target.value)} placeholder="タスクの詳細説明（任意）" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">ステータス</label>
+              <select className={inp} value={form.status} onChange={e => set('status', e.target.value)}>
+                {STATUSES.map(s => <option key={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">優先度</label>
+              <select className={inp} value={form.priority} onChange={e => set('priority', e.target.value)}>
+                {PRIORITIES.map(p => <option key={p}>{p}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">担当者</label>
+              <input className={inp} value={form.assignee} onChange={e => set('assignee', e.target.value)} placeholder="担当者名" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">期限</label>
+              <input type="date" className={inp} value={form.due_date} onChange={e => set('due_date', e.target.value)} />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">ラベル</label>
+            <input className={inp} value={form.labels} onChange={e => set('labels', e.target.value)} placeholder="デザイン, コーディング（カンマ区切り）" />
+          </div>
+          <div>
+            <label className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5 block">プロジェクト</label>
+            <select className={inp} value={form.project_id} onChange={e => set('project_id', e.target.value)}>
+              {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 py-2.5 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 font-medium">キャンセル</button>
+            <button type="submit" disabled={saving} className="flex-1 py-2.5 rounded-xl bg-indigo-600 text-white text-sm hover:bg-indigo-700 font-semibold disabled:opacity-50">
+              {saving ? '保存中…' : '保存する'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ── Task Detail Panel ─────────────────────────────────────────────────
+function TaskDetailPanel({ taskId, projects, onClose, onEdit, onDeleted, onReload }) {
+  const [task, setTask] = useState(null);
+  const [newSub, setNewSub] = useState('');
+  const [comment, setComment] = useState('');
+  const [delConfirm, setDelConfirm] = useState(false);
+
+  const load = useCallback(() => api(`/api/tasks/${taskId}`).then(setTask), [taskId]);
+  useEffect(() => { load(); }, [load]);
+
+  if (!task) return (
+    <div className="w-80 shrink-0 bg-white border-l border-gray-100 flex items-center justify-center">
+      <p className="text-gray-400 text-sm">読み込み中…</p>
+    </div>
+  );
+
+  const s = STATUS_STYLE[task.status] || STATUS_STYLE['未着手'];
+  const project = projects.find(p => p.id === task.project_id);
+  const labels = task.labels ? task.labels.split(',').map(l => l.trim()).filter(Boolean) : [];
+  const doneSubs = task.subtasks.filter(s => s.done).length;
+  const pct = task.subtasks.length ? Math.round(doneSubs / task.subtasks.length * 100) : 0;
+
+  async function addSub() {
+    if (!newSub.trim()) return;
+    await api(`/api/tasks/${taskId}/subtasks`, { method: 'POST', body: { title: newSub } });
+    setNewSub(''); load();
+  }
+  async function toggleSub(sub) {
+    await api(`/api/subtasks/${sub.id}`, { method: 'PUT', body: { done: !sub.done } });
+    load(); onReload();
+  }
+  async function delSub(id) { await api(`/api/subtasks/${id}`, { method: 'DELETE' }); load(); onReload(); }
+  async function postComment() {
+    if (!comment.trim()) return;
+    await api(`/api/tasks/${taskId}/comments`, { method: 'POST', body: { content: comment } });
+    setComment(''); load();
+  }
+  async function delComment(id) { await api(`/api/comments/${id}`, { method: 'DELETE' }); load(); }
+  async function delTask() { await api(`/api/tasks/${taskId}`, { method: 'DELETE' }); onDeleted(); }
+
+  const row = (label, val) => (
+    <div className="flex items-start gap-3 py-2 border-b border-gray-50">
+      <span className="text-xs text-gray-400 w-16 shrink-0 pt-0.5">{label}</span>
+      <div className="flex-1 text-xs text-gray-700">{val}</div>
+    </div>
+  );
+
+  return (
+    <div className="w-80 shrink-0 bg-white border-l border-gray-200 flex flex-col h-full overflow-hidden panel-enter">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+        <span className="text-xs font-semibold text-gray-500">タスク詳細</span>
+        <div className="flex gap-1">
+          <button onClick={onEdit} className="text-xs px-2.5 py-1 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">編集</button>
+          {delConfirm ? (
+            <div className="flex gap-1">
+              <button onClick={delTask} className="text-xs px-2.5 py-1 rounded-lg bg-red-500 text-white hover:bg-red-600">確認</button>
+              <button onClick={() => setDelConfirm(false)} className="text-xs px-2.5 py-1 rounded-lg border hover:bg-gray-50">×</button>
+            </div>
+          ) : (
+            <button onClick={() => setDelConfirm(true)} className="text-xs px-2.5 py-1 rounded-lg border border-red-200 text-red-500 hover:bg-red-50">削除</button>
+          )}
+          <button onClick={onClose} className="w-7 h-7 flex items-center justify-center rounded-lg hover:bg-gray-100 text-gray-400 text-lg leading-none">&times;</button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        {/* Title */}
+        <div className="px-4 pt-4 pb-3 border-b border-gray-100">
+          <h2 className="text-sm font-bold text-gray-900 leading-snug">{task.title}</h2>
+        </div>
+
+        {/* Fields */}
+        <div className="px-4 py-2">
+          {row('担当者', task.assignee ? (
+            <div className="flex items-center gap-1.5"><Avatar name={task.assignee} size={18} /><span>{task.assignee}</span></div>
+          ) : <span className="text-gray-300">未設定</span>)}
+          {row('期限', task.due_date ? (
+            <span className={isOverdue(task.due_date, task.status) ? 'text-red-500 font-medium' : ''}>{fmtDate(task.due_date)}{isOverdue(task.due_date, task.status) ? ' ⚠️' : ''}</span>
+          ) : <span className="text-gray-300">未設定</span>)}
+          {row('プロジェクト', <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm inline-block" style={{ background: project?.color }} />{project?.name}</span>)}
+          {row('ステータス', <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${s.bg} ${s.text}`}>{task.status}</span>)}
+          {row('優先度', <PriBadge priority={task.priority} />)}
+          {labels.length > 0 && row('ラベル', <div className="flex flex-wrap gap-1">{labels.map(l => <LabelBadge key={l} label={l} />)}</div>)}
+        </div>
+
+        {/* Description */}
+        {task.description && (
+          <div className="px-4 py-3 border-t border-gray-100">
+            <p className="text-xs font-semibold text-gray-500 mb-1.5">説明</p>
+            <p className="text-xs text-gray-700 whitespace-pre-wrap leading-relaxed bg-gray-50 rounded-lg p-3">{task.description}</p>
+          </div>
+        )}
+
+        {/* Progress */}
+        {task.subtasks.length > 0 && (
+          <div className="px-4 py-3 border-t border-gray-100">
+            <div className="flex justify-between items-center mb-1.5">
+              <p className="text-xs font-semibold text-gray-500">進捗</p>
+              <span className="text-xs text-gray-400">{pct}%</span>
+            </div>
+            <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+              <div className="h-full bg-indigo-500 rounded-full transition-all" style={{ width: `${pct}%` }} />
+            </div>
+          </div>
+        )}
+
+        {/* Subtasks / Checklist */}
+        <div className="px-4 py-3 border-t border-gray-100">
+          <p className="text-xs font-semibold text-gray-500 mb-2">チェックリスト {task.subtasks.length > 0 && <span className="text-gray-400 font-normal">({doneSubs}/{task.subtasks.length})</span>}</p>
+          <div className="space-y-1.5 mb-2">
+            {task.subtasks.map(sub => (
+              <div key={sub.id} className="flex items-center gap-2 group">
+                <input type="checkbox" checked={sub.done} onChange={() => toggleSub(sub)} className="rounded border-gray-300 text-indigo-600 cursor-pointer" />
+                <span className={`flex-1 text-xs ${sub.done ? 'line-through text-gray-400' : 'text-gray-700'}`}>{sub.title}</span>
+                <button onClick={() => delSub(sub.id)} className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 text-sm shrink-0">×</button>
+              </div>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input
+              className="flex-1 border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200"
+              value={newSub} onChange={e => setNewSub(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && addSub()}
+              placeholder="＋ 項目を追加"
+            />
+            <button onClick={addSub} className="text-xs px-2.5 py-1.5 bg-indigo-50 text-indigo-600 rounded-lg hover:bg-indigo-100 font-medium">追加</button>
+          </div>
+        </div>
+
+        {/* Comments */}
+        <div className="px-4 py-3 border-t border-gray-100">
+          <p className="text-xs font-semibold text-gray-500 mb-2">コメント {task.comments.length > 0 && <span className="text-gray-400 font-normal">({task.comments.length})</span>}</p>
+          {task.comments.map(c => (
+            <div key={c.id} className="flex gap-2 mb-3 group">
+              <Avatar name={c.author} size={22} />
+              <div className="flex-1 min-w-0">
+                <div className="flex items-baseline justify-between gap-1">
+                  <span className="text-xs font-semibold text-gray-700">{c.author}</span>
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs text-gray-400">{new Date(c.created_at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                    <button onClick={() => delComment(c.id)} className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 text-sm">×</button>
+                  </div>
+                </div>
+                <p className="text-xs text-gray-600 mt-0.5 whitespace-pre-wrap">{c.content}</p>
+              </div>
+            </div>
+          ))}
+          <div className="flex gap-2 mt-1">
+            <Avatar name="山田 太郎" size={22} />
+            <div className="flex-1 flex gap-1">
+              <input
+                className="flex-1 border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                value={comment} onChange={e => setComment(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && !e.shiftKey && postComment()}
+                placeholder="コメントを追加…"
+              />
+              <button onClick={postComment} className="text-xs px-2.5 py-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium shrink-0">投稿</button>
+            </div>
+          </div>
+        </div>
+
+        <div className="px-4 py-3 border-t border-gray-100">
+          <p className="text-xs text-gray-300">更新: {new Date(task.updated_at).toLocaleString('ja-JP')}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Dashboard View ────────────────────────────────────────────────────
+function DashboardView({ projects, activeProjectId }) {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    const q = activeProjectId ? `?project_id=${activeProjectId}` : '';
+    api(`/api/dashboard${q}`).then(setData);
+  }, [activeProjectId]);
+
+  if (!data) return <div className="p-8 text-center text-gray-400">読み込み中…</div>;
+
+  const cards = [
+    { label: '総タスク数', value: data.total, cls: 'text-indigo-600', bg: 'bg-indigo-50 border-indigo-100' },
+    { label: '完了率',     value: `${data.completion_rate}%`, cls: 'text-green-600', bg: 'bg-green-50 border-green-100' },
+    { label: '期限超過',   value: data.overdue, cls: 'text-red-600', bg: 'bg-red-50 border-red-100' },
+    { label: '進行中',     value: data.by_status['進行中'] || 0, cls: 'text-blue-600', bg: 'bg-blue-50 border-blue-100' },
+  ];
+
+  return (
+    <div className="p-6 max-w-4xl">
+      <h2 className="text-xl font-bold text-gray-800 mb-6">ダッシュボード</h2>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        {cards.map(c => (
+          <div key={c.label} className={`${c.bg} border rounded-2xl p-5`}>
+            <p className="text-xs text-gray-500 mb-1">{c.label}</p>
+            <p className={`text-3xl font-bold ${c.cls}`}>{c.value}</p>
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="bg-white border border-gray-100 rounded-2xl p-5">
+          <h3 className="text-sm font-semibold text-gray-700 mb-4">ステータス別</h3>
+          <div className="space-y-3">
+            {STATUSES.map(s => {
+              const count = data.by_status[s] || 0;
+              const pct = data.total ? Math.round(count / data.total * 100) : 0;
+              const st = STATUS_STYLE[s];
+              return (
+                <div key={s} className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5 w-20 shrink-0">
+                    <span className={`w-2 h-2 rounded-full ${st.dot}`} />
+                    <span className="text-xs text-gray-600">{s}</span>
+                  </div>
+                  <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div className={`h-full rounded-full transition-all ${st.dot}`} style={{ width: `${pct}%` }} />
+                  </div>
+                  <span className="text-xs font-semibold text-gray-500 w-6 text-right">{count}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        {Object.keys(data.by_assignee).length > 0 && (
+          <div className="bg-white border border-gray-100 rounded-2xl p-5">
+            <h3 className="text-sm font-semibold text-gray-700 mb-4">担当者別</h3>
+            <div className="space-y-3">
+              {Object.entries(data.by_assignee).sort((a, b) => b[1] - a[1]).map(([name, count]) => {
+                const max = Math.max(...Object.values(data.by_assignee));
+                return (
+                  <div key={name} className="flex items-center gap-3">
+                    <div className="flex items-center gap-1.5 w-24 shrink-0">
+                      <Avatar name={name} size={18} />
+                      <span className="text-xs text-gray-600 truncate">{name.split(' ')[0]}</span>
+                    </div>
+                    <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                      <div className="h-full bg-indigo-400 rounded-full transition-all" style={{ width: `${count / max * 100}%` }} />
+                    </div>
+                    <span className="text-xs font-semibold text-gray-500 w-4 text-right">{count}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Sidebar ───────────────────────────────────────────────────────────
+function Sidebar({ projects, activeProjectId, onSelect, onProjectAdded, onProjectDeleted, view, onView }) {
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newColor, setNewColor] = useState('#6366f1');
+
+  async function addProject() {
+    if (!newName.trim()) return;
+    await api('/api/projects', { method: 'POST', body: { name: newName, color: newColor } });
+    setNewName(''); setNewColor('#6366f1'); setAdding(false);
+    onProjectAdded();
+  }
+
+  const navItems = [
+    { id: 'dashboard', label: 'ダッシュボード', icon: '📊' },
+    { id: 'board',     label: 'ボード',         icon: '⬛' },
+    { id: 'list',      label: 'リスト',         icon: '☰' },
+  ];
+
+  const colors = ['#6366f1','#0ea5e9','#f59e0b','#10b981','#ec4899','#ef4444'];
+
+  return (
+    <div className="w-52 shrink-0 bg-white border-r border-gray-100 flex flex-col h-full shadow-sm">
+      {/* Logo */}
+      <div className="px-4 py-4 border-b border-gray-100">
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 bg-indigo-600 rounded-lg flex items-center justify-center">
+            <span className="text-white font-bold text-sm">T</span>
+          </div>
+          <span className="font-bold text-gray-800 text-sm">TaskFlow Pro</span>
+        </div>
+      </div>
+
+      {/* New Task button */}
+      <div className="px-3 pt-3">
+        <button onClick={() => onView('board')} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold py-2 rounded-xl transition-colors flex items-center justify-center gap-1.5">
+          <span className="text-lg leading-none">+</span> 新しいタスク
+        </button>
+      </div>
+
+      {/* Nav */}
+      <div className="px-2 pt-3 space-y-0.5">
+        {navItems.map(n => (
+          <button key={n.id} onClick={() => onView(n.id)}
+                  className={`w-full text-left px-3 py-2 rounded-xl text-sm flex items-center gap-2.5 transition-colors ${view === n.id ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}>
+            <span className="text-base">{n.icon}</span>{n.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Projects */}
+      <div className="px-3 mt-4 mb-1 flex items-center justify-between">
+        <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">プロジェクト</span>
+        <button onClick={() => setAdding(v => !v)} className="w-5 h-5 text-gray-400 hover:text-indigo-600 text-lg leading-none flex items-center justify-center">+</button>
+      </div>
+
+      {adding && (
+        <div className="px-3 mb-2 space-y-1.5">
+          <input autoFocus
+            className="w-full border border-gray-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-200"
+            value={newName} onChange={e => setNewName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' ? addProject() : e.key === 'Escape' && setAdding(false)}
+            placeholder="プロジェクト名 (Enter)"
+          />
+          <div className="flex gap-1">
+            {colors.map(c => (
+              <button key={c} onClick={() => setNewColor(c)}
+                      className={`w-5 h-5 rounded-full transition-transform ${newColor === c ? 'scale-125 ring-2 ring-offset-1 ring-gray-400' : ''}`}
+                      style={{ background: c }} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="flex-1 overflow-y-auto px-2 pb-4 space-y-0.5">
+        <button onClick={() => onSelect(null)}
+                className={`w-full text-left px-3 py-2 rounded-xl text-sm transition-colors ${!activeProjectId ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}>
+          すべて
+        </button>
+        {projects.map(p => (
+          <div key={p.id} className="group flex items-center">
+            <button onClick={() => onSelect(p.id)}
+                    className={`flex-1 text-left px-3 py-2 rounded-xl text-sm transition-colors flex items-center gap-2 min-w-0 ${activeProjectId === p.id ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-gray-600 hover:bg-gray-50'}`}>
+              <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{ background: p.color }} />
+              <span className="truncate">{p.name}</span>
+              <span className="text-xs text-gray-400 ml-auto shrink-0">{p.task_count}</span>
+            </button>
+            <button onClick={() => onProjectDeleted(p.id)} className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 px-1 text-sm">×</button>
+          </div>
+        ))}
+      </div>
+
+      {/* User info */}
+      <div className="px-3 py-3 border-t border-gray-100 flex items-center gap-2">
+        <Avatar name="山田 太郎" size={28} />
+        <div className="min-w-0">
+          <p className="text-xs font-semibold text-gray-700 truncate">山田 太郎</p>
+          <p className="text-xs text-gray-400 truncate">yamada@example.com</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Filter Bar ────────────────────────────────────────────────────────
+function FilterBar({ filters, onChange, assignees }) {
+  const inp = "border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 bg-white text-gray-700";
+  const hasFilter = filters.q || filters.status || filters.priority || filters.assignee;
+  return (
+    <div className="flex items-center flex-wrap gap-2 px-6 py-3 bg-white border-b border-gray-100">
+      <input className={`${inp} w-44`} placeholder="🔍 タスクを検索…" value={filters.q} onChange={e => onChange({ ...filters, q: e.target.value })} />
+      <select className={inp} value={filters.assignee} onChange={e => onChange({ ...filters, assignee: e.target.value })}>
+        <option value="">担当者</option>
+        {assignees.map(a => <option key={a}>{a}</option>)}
+      </select>
+      <select className={inp} value={filters.status} onChange={e => onChange({ ...filters, status: e.target.value })}>
+        <option value="">ステータス</option>
+        {STATUSES.map(s => <option key={s}>{s}</option>)}
+      </select>
+      <select className={inp} value={filters.priority} onChange={e => onChange({ ...filters, priority: e.target.value })}>
+        <option value="">優先度</option>
+        {PRIORITIES.map(p => <option key={p}>{p}</option>)}
+      </select>
+      {hasFilter && (
+        <button onClick={() => onChange({ q: '', status: '', priority: '', assignee: '' })}
+                className="text-xs text-indigo-600 hover:text-indigo-800 px-2 py-1.5 hover:bg-indigo-50 rounded-lg transition-colors font-medium">
+          フィルターをクリア
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── App ───────────────────────────────────────────────────────────────
+function App() {
+  const [projects, setProjects] = useState([]);
+  const [tasks, setTasks] = useState([]);
+  const [activeProjectId, setActiveProjectId] = useState(null);
+  const [view, setView] = useState('board');
+  const [filters, setFilters] = useState({ q: '', status: '', priority: '', assignee: '' });
+  const [selectedTaskId, setSelectedTaskId] = useState(null);
+  const [taskForm, setTaskForm] = useState(null); // null | {task?, defaultStatus?}
+
+  const loadProjects = useCallback(() => api('/api/projects').then(setProjects), []);
+  const loadTasks = useCallback(() => {
+    const p = new URLSearchParams();
+    if (activeProjectId) p.set('project_id', activeProjectId);
+    if (filters.status)   p.set('status', filters.status);
+    if (filters.priority) p.set('priority', filters.priority);
+    if (filters.assignee) p.set('assignee', filters.assignee);
+    if (filters.q)        p.set('q', filters.q);
+    return api(`/api/tasks?${p}`).then(setTasks);
+  }, [activeProjectId, filters]);
+
+  useEffect(() => { loadProjects(); }, [loadProjects]);
+  useEffect(() => { loadTasks(); }, [loadTasks]);
+
+  async function handleStatusChange(taskId, newStatus) {
+    await api(`/api/tasks/${taskId}`, { method: 'PUT', body: { status: newStatus } });
+    loadTasks();
+  }
+
+  async function deleteProject(id) {
+    if (!window.confirm('このプロジェクトと全タスクを削除しますか？')) return;
+    await api(`/api/projects/${id}`, { method: 'DELETE' });
+    if (activeProjectId === id) setActiveProjectId(null);
+    loadProjects(); loadTasks();
+  }
+
+  const assignees = [...new Set(tasks.map(t => t.assignee).filter(Boolean))];
+  const selectedTask = selectedTaskId ? tasks.find(t => t.id === selectedTaskId) : null;
+  const activeProject = activeProjectId ? projects.find(p => p.id === activeProjectId) : null;
+  const tabs = [
+    { id: 'dashboard', label: '概要' },
+    { id: 'board', label: 'ボード' },
+    { id: 'list', label: 'リスト' },
+  ];
+
+  return (
+    <div className="flex h-screen overflow-hidden bg-gray-50">
+      <Sidebar
+        projects={projects}
+        activeProjectId={activeProjectId}
+        onSelect={id => { setActiveProjectId(id); setSelectedTaskId(null); }}
+        onProjectAdded={() => { loadProjects(); loadTasks(); }}
+        onProjectDeleted={deleteProject}
+        view={view}
+        onView={v => { setView(v); setSelectedTaskId(null); }}
+      />
+
+      {/* Main */}
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {/* Project header */}
+        <div className="bg-white border-b border-gray-100 px-6 py-0">
+          <div className="flex items-center justify-between pt-4 pb-0">
+            <div className="flex items-center gap-3">
+              {activeProject && <span className="w-3 h-3 rounded-sm" style={{ background: activeProject.color }} />}
+              <h1 className="text-lg font-bold text-gray-900">{activeProject?.name ?? 'すべてのタスク'}</h1>
+            </div>
+            <div className="flex items-center gap-2 pb-2">
+              <div className="flex -space-x-1">
+                {['山田 太郎','鈴木 一郎','佐藤 花子','田中 美咲'].map(n => (
+                  <div key={n} className="ring-2 ring-white rounded-full"><Avatar name={n} size={26} /></div>
+                ))}
+              </div>
+              <button onClick={() => setTaskForm({})} className="ml-2 px-3.5 py-1.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl hover:bg-indigo-700 transition-colors">
+                + 新しいタスク
+              </button>
+            </div>
+          </div>
+          {/* Tabs */}
+          <div className="flex gap-0 mt-1">
+            {tabs.map(t => (
+              <button key={t.id} onClick={() => setView(t.id)}
+                      className={`px-4 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px ${view === t.id ? 'tab-active' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Filter bar (not for dashboard) */}
+        {view !== 'dashboard' && (
+          <FilterBar filters={filters} onChange={setFilters} assignees={assignees} />
+        )}
+
+        {/* Content + Detail Panel */}
+        <div className="flex-1 flex min-h-0 overflow-hidden">
+          {/* Content */}
+          <div className="flex-1 overflow-auto">
+            {view === 'dashboard' && <DashboardView projects={projects} activeProjectId={activeProjectId} />}
+
+            {view === 'board' && (
+              <div className="p-6">
+                <div className="flex gap-5 pb-6 overflow-x-auto" style={{ minHeight: 'calc(100vh - 220px)' }}>
+                  {STATUSES.map(status => (
+                    <KanbanColumn
+                      key={status}
+                      status={status}
+                      tasks={tasks.filter(t => t.status === status)}
+                      onDrop={(taskId, newStatus) => handleStatusChange(Number(taskId), newStatus)}
+                      onCard={id => setSelectedTaskId(prev => prev === id ? null : id)}
+                      onNewTask={st => setTaskForm({ defaultStatus: st })}
+                      selectedId={selectedTaskId}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {view === 'list' && (
+              <div className="p-6">
+                {tasks.length === 0 ? (
+                  <div className="text-center py-20 text-gray-400">
+                    <p className="text-5xl mb-4">📋</p>
+                    <p className="font-medium">タスクがありません</p>
+                    <button onClick={() => setTaskForm({})} className="mt-4 px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl text-sm hover:bg-indigo-100 font-medium">最初のタスクを追加</button>
+                  </div>
+                ) : (
+                  <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
+                    <table className="w-full">
+                      <thead className="bg-gray-50 border-b border-gray-100">
+                        <tr>
+                          <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">タスク名</th>
+                          <th className="text-left px-3 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden sm:table-cell">ステータス</th>
+                          <th className="text-left px-3 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden md:table-cell">優先度</th>
+                          <th className="text-left px-3 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden md:table-cell">担当者</th>
+                          <th className="text-left px-3 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide hidden lg:table-cell">期限</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {tasks.map(t => (
+                          <ListRow key={t.id} task={t} onClick={id => setSelectedTaskId(prev => prev === id ? null : id)} isSelected={selectedTaskId === t.id} />
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Task Detail Panel */}
+          {selectedTaskId && (
+            <TaskDetailPanel
+              key={selectedTaskId}
+              taskId={selectedTaskId}
+              projects={projects}
+              onClose={() => setSelectedTaskId(null)}
+              onEdit={() => {
+                const t = tasks.find(x => x.id === selectedTaskId);
+                if (t) setTaskForm({ task: t });
+              }}
+              onDeleted={() => { setSelectedTaskId(null); loadTasks(); loadProjects(); }}
+              onReload={loadTasks}
+            />
+          )}
+        </div>
+      </div>
+
+      {/* Task Form Modal */}
+      {taskForm !== null && (
+        <TaskFormModal
+          task={taskForm.task ?? null}
+          defaultStatus={taskForm.defaultStatus ?? null}
+          projects={projects}
+          onSave={() => { setTaskForm(null); loadTasks(); loadProjects(); }}
+          onClose={() => setTaskForm(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
