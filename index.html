@@ -8,6 +8,7 @@
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     *{box-sizing:border-box}
     body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f4f5f7}
@@ -29,93 +30,23 @@
 <script type="text/babel">
 const{useState,useEffect,useCallback,useMemo,useRef}=React;
 
+// ─── Supabase ─────────────────────────────────────────────────────────
+const SUPABASE_URL='https://zuxhkqvkwanygululhdm.supabase.co';
+const SUPABASE_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp1eGhrcXZrd2FueWd1bHVsaGRtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxNTYwODUsImV4cCI6MjA5MzczMjA4NX0.gKfM_iegmA-Uw4C4ch4i3xnQYwuJiAAJzLpvM_TL8Gg';
+const supabase=supabaseJs.createClient(SUPABASE_URL,SUPABASE_KEY);
+
 // ─── Crypto / Auth ────────────────────────────────────────────────────
 async function sha256(str){
   const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(str));
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
 }
 
-// ─── localStorage DB ──────────────────────────────────────────────────
-const DB_KEY='tfp_v2';
+// ─── Utilities ────────────────────────────────────────────────────────
 function now(){return new Date().toISOString()}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2)}
 
-function loadDB(){try{const r=localStorage.getItem(DB_KEY);if(r)return JSON.parse(r)}catch{}return null}
-function saveDB(db){localStorage.setItem(DB_KEY,JSON.stringify(db))}
-
-function buildInitDB(){
-  const n=new Date(),d=days=>new Date(n.getTime()+days*86400000).toISOString();
-  const PASS_HASH='8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918'; // admin
-  const users=[
-    {id:'u1',username:'admin',display_name:'山田 太郎',color:'#6366f1',password_hash:PASS_HASH,role:'admin'},
-    {id:'u2',username:'suzuki',display_name:'鈴木 一郎',color:'#0ea5e9',password_hash:PASS_HASH,role:'member'},
-    {id:'u3',username:'sato',display_name:'佐藤 花子',color:'#ec4899',password_hash:PASS_HASH,role:'member'},
-  ];
-  const projects=[
-    {id:'p1',name:'Webサイトリニューアル',color:'#6366f1',created_at:now()},
-    {id:'p2',name:'モバイルアプリ開発',color:'#0ea5e9',created_at:now()},
-    {id:'p3',name:'マーケティング施策',color:'#f59e0b',created_at:now()},
-    {id:'p4',name:'社内業務改善',color:'#10b981',created_at:now()},
-  ];
-  const tasks=[
-    {id:'t1',project_id:'p1',title:'要件定義書の作成',status:'未着手',priority:'高',assignee:'山田 太郎',labels:'ドキュメント',start_date:d(1),due_date:d(40),progress:0,description:'',created_at:now(),updated_at:now()},
-    {id:'t2',project_id:'p1',title:'競合サイトの調査',status:'未着手',priority:'中',assignee:'佐藤 花子',labels:'',start_date:d(2),due_date:d(42),progress:0,description:'',created_at:now(),updated_at:now()},
-    {id:'t3',project_id:'p1',title:'ワイヤーフレームの作成',status:'未着手',priority:'中',assignee:'鈴木 一郎',labels:'',start_date:d(5),due_date:d(45),progress:0,description:'',created_at:now(),updated_at:now()},
-    {id:'t4',project_id:'p1',title:'コンテンツ構成案の作成',status:'未着手',priority:'低',assignee:'田中 美咲',labels:'',start_date:d(10),due_date:d(47),progress:0,description:'',created_at:now(),updated_at:now()},
-    {id:'t5',project_id:'p1',title:'デザインコンセプトの策定',status:'未着手',priority:'中',assignee:'山田 太郎',labels:'',start_date:d(15),due_date:d(50),progress:0,description:'',created_at:now(),updated_at:now()},
-    {id:'t6',project_id:'p1',title:'トップページのデザイン作成',status:'進行中',priority:'高',assignee:'鈴木 一郎',labels:'デザイン,トップページ',start_date:d(-5),due_date:d(5),progress:50,description:'トップページのデザインカンプを作成してください。PC版とスマートフォン版の両方をお願いします。',created_at:now(),updated_at:now()},
-    {id:'t7',project_id:'p1',title:'下層ページのデザイン作成',status:'進行中',priority:'中',assignee:'田中 美咲',labels:'デザイン',start_date:d(-3),due_date:d(8),progress:30,description:'',created_at:now(),updated_at:now()},
-    {id:'t8',project_id:'p1',title:'コーディング（トップページ）',status:'進行中',priority:'高',assignee:'伊藤 健太',labels:'コーディング',start_date:d(-2),due_date:d(9),progress:60,description:'',created_at:now(),updated_at:now()},
-    {id:'t9',project_id:'p1',title:'お問い合わせフォームの実装',status:'進行中',priority:'中',assignee:'伊藤 健太',labels:'',start_date:d(-1),due_date:d(11),progress:20,description:'',created_at:now(),updated_at:now()},
-    {id:'t10',project_id:'p1',title:'スマートフォン表示の確認',status:'レビュー中',priority:'高',assignee:'佐藤 花子',labels:'テスト',start_date:d(-10),due_date:d(3),progress:80,description:'',created_at:now(),updated_at:now()},
-    {id:'t11',project_id:'p1',title:'SEO対策の確認',status:'レビュー中',priority:'中',assignee:'山田 太郎',labels:'SEO',start_date:d(-8),due_date:d(4),progress:70,description:'',created_at:now(),updated_at:now()},
-    {id:'t12',project_id:'p1',title:'プロジェクトキックオフ',status:'完了',priority:'高',assignee:'山田 太郎',labels:'',start_date:d(-40),due_date:d(-30),progress:100,description:'',created_at:now(),updated_at:now()},
-    {id:'t13',project_id:'p1',title:'サイトマップの作成',status:'完了',priority:'中',assignee:'鈴木 一郎',labels:'',start_date:d(-30),due_date:d(-20),progress:100,description:'',created_at:now(),updated_at:now()},
-    {id:'t14',project_id:'p1',title:'ロゴ・画像素材の準備',status:'完了',priority:'中',assignee:'田中 美咲',labels:'デザイン',start_date:d(-20),due_date:d(-10),progress:100,description:'',created_at:now(),updated_at:now()},
-    {id:'t15',project_id:'p2',title:'ログイン画面実装',status:'進行中',priority:'高',assignee:'佐藤 花子',labels:'',start_date:d(-5),due_date:d(10),progress:40,description:'',created_at:now(),updated_at:now()},
-    {id:'t16',project_id:'p2',title:'プッシュ通知対応',status:'未着手',priority:'中',assignee:'鈴木 一郎',labels:'',start_date:d(5),due_date:d(20),progress:0,description:'',created_at:now(),updated_at:now()},
-    {id:'t17',project_id:'p2',title:'API連携テスト',status:'レビュー中',priority:'高',assignee:'伊藤 健太',labels:'テスト',start_date:d(-3),due_date:d(5),progress:85,description:'',created_at:now(),updated_at:now()},
-    {id:'t18',project_id:'p2',title:'ストア申請',status:'未着手',priority:'中',assignee:'山田 太郎',labels:'',start_date:d(15),due_date:d(30),progress:0,description:'',created_at:now(),updated_at:now()},
-  ];
-  const subtasks=[
-    {id:'s1',task_id:'t6',title:'デザインコンセプトの確認',done:true},
-    {id:'s2',task_id:'t6',title:'PC版デザインの作成',done:true},
-    {id:'s3',task_id:'t6',title:'スマートフォン版デザインの作成',done:false},
-    {id:'s4',task_id:'t6',title:'デザインレビュー・修正',done:false},
-    {id:'s5',task_id:'t8',title:'HTML/CSSコーディング',done:true},
-    {id:'s6',task_id:'t8',title:'JavaScript実装',done:true},
-    {id:'s7',task_id:'t8',title:'レスポンシブ対応',done:true},
-    {id:'s8',task_id:'t8',title:'ブラウザテスト',done:false},
-    {id:'s9',task_id:'t8',title:'パフォーマンス最適化',done:false},
-  ];
-  const comments=[
-    {id:'c1',task_id:'t6',author:'山田 太郎',content:'デザインコンセプトを共有します。ご確認をお願いします。',created_at:new Date(Date.now()-7200000).toISOString()},
-    {id:'c2',task_id:'t6',author:'鈴木 一郎',content:'確認しました。PC版は問題ないです。スマートフォン版のモックアップも楽しみにしています！',created_at:new Date(Date.now()-3600000).toISOString()},
-  ];
-  return{users,projects,tasks,subtasks,comments};
-}
-
-function getDB(){
-  let db=loadDB();
-  if(!db){db=buildInitDB();saveDB(db);}
-  // マイグレーション: start_date/progress フィールド補完
-  let changed=false;
-  db.tasks.forEach(t=>{
-    if(t.start_date===undefined){t.start_date=null;changed=true;}
-    if(t.progress===undefined){t.progress=0;changed=true;}
-  });
-  if(changed)saveDB(db);
-  return db;
-}
-
-// Session
+// ─── Session ──────────────────────────────────────────────────────────
 const SESSION_KEY='tfp_session';
-function getSession(){try{const s=localStorage.getItem(SESSION_KEY);return s?JSON.parse(s):null}catch{return null}}
-function setSession(u,remember){
-  const s={user_id:u.id,display_name:u.display_name,color:u.color,username:u.username,role:u.role};
-  if(remember)localStorage.setItem(SESSION_KEY,JSON.stringify(s));
-  else sessionStorage.setItem(SESSION_KEY,JSON.stringify(s));
-}
 function getActiveSession(){
   try{
     const ls=localStorage.getItem(SESSION_KEY);
@@ -125,43 +56,133 @@ function getActiveSession(){
   }catch{}
   return null;
 }
+function setSession(u,remember){
+  const s={user_id:u.id,display_name:u.display_name,color:u.color,username:u.username,role:u.role};
+  if(remember)localStorage.setItem(SESSION_KEY,JSON.stringify(s));
+  else sessionStorage.setItem(SESSION_KEY,JSON.stringify(s));
+}
 function clearSession(){localStorage.removeItem(SESSION_KEY);sessionStorage.removeItem(SESSION_KEY);}
 
-// CRUD
+// ─── CRUD (Supabase async) ────────────────────────────────────────────
 const CRUD={
-  getProjects:()=>getDB().projects,
-  createProject:(data)=>{const db=getDB();const p={id:uid(),created_at:now(),color:'#6366f1',...data};db.projects.push(p);saveDB(db);return p},
-  deleteProject:(id)=>{const db=getDB();const tids=db.tasks.filter(t=>t.project_id===id).map(t=>t.id);db.projects=db.projects.filter(p=>p.id!==id);db.tasks=db.tasks.filter(t=>t.project_id!==id);db.subtasks=db.subtasks.filter(s=>!tids.includes(s.task_id));db.comments=db.comments.filter(c=>!tids.includes(c.task_id));saveDB(db)},
-  getTasks:(f={})=>{
-    let tasks=getDB().tasks;
-    if(f.project_id)tasks=tasks.filter(t=>t.project_id===f.project_id);
-    if(f.status)tasks=tasks.filter(t=>t.status===f.status);
-    if(f.priority)tasks=tasks.filter(t=>t.priority===f.priority);
-    if(f.assignee)tasks=tasks.filter(t=>t.assignee===f.assignee);
-    if(f.q)tasks=tasks.filter(t=>t.title.toLowerCase().includes(f.q.toLowerCase()));
-    const db=getDB();
+  // Projects
+  async getProjects(){
+    const{data,error}=await supabase.from('tfp_projects').select('*').order('created_at',{ascending:true});
+    if(error)throw error;
+    return data||[];
+  },
+  async createProject(data){
+    const p={id:uid(),created_at:now(),...data};
+    const{data:res,error}=await supabase.from('tfp_projects').insert(p).select().single();
+    if(error)throw error;
+    return res;
+  },
+  async updateProject(id,data){
+    const{data:res,error}=await supabase.from('tfp_projects').update(data).eq('id',id).select().single();
+    if(error)throw error;
+    return res;
+  },
+  async deleteProject(id){
+    // cascade: delete subtasks/comments for tasks in this project
+    const{data:tasks}=await supabase.from('tfp_tasks').select('id').eq('project_id',id);
+    if(tasks&&tasks.length){
+      const tids=tasks.map(t=>t.id);
+      await supabase.from('tfp_subtasks').delete().in('task_id',tids);
+      await supabase.from('tfp_comments').delete().in('task_id',tids);
+    }
+    await supabase.from('tfp_tasks').delete().eq('project_id',id);
+    const{error}=await supabase.from('tfp_projects').delete().eq('id',id);
+    if(error)throw error;
+  },
+
+  // Tasks
+  async getTasks(f={}){
+    let q=supabase.from('tfp_tasks').select('*');
+    if(f.project_id)q=q.eq('project_id',f.project_id);
+    if(f.status)q=q.eq('status',f.status);
+    if(f.priority)q=q.eq('priority',f.priority);
+    if(f.assignee)q=q.eq('assignee',f.assignee);
+    if(f.q)q=q.ilike('title',`%${f.q}%`);
+    q=q.order('created_at',{ascending:true});
+    const{data:tasks,error}=await q;
+    if(error)throw error;
+    if(!tasks||tasks.length===0)return[];
+
+    // fetch subtasks for progress calculation
+    const tids=tasks.map(t=>t.id);
+    const{data:allSubs}=await supabase.from('tfp_subtasks').select('*').in('task_id',tids);
+    const subMap={};
+    (allSubs||[]).forEach(s=>{if(!subMap[s.task_id])subMap[s.task_id]=[];subMap[s.task_id].push(s);});
+
     return tasks.map(t=>{
-      const subs=db.subtasks.filter(s=>s.task_id===t.id);
-      const autoP=subs.length?Math.round(subs.filter(s=>s.done).length/subs.length*100):0;
-      return{...t,subtask_count:subs.length,done_subtask_count:subs.filter(s=>s.done).length,effective_progress:t.progress||autoP};
+      const subs=subMap[t.id]||[];
+      const autoP=subs.length?Math.round(subs.filter(s=>s.status==='done').length/subs.length*100):0;
+      return{...t,subtask_count:subs.length,done_subtask_count:subs.filter(s=>s.status==='done').length,effective_progress:t.progress||autoP};
     });
   },
-  getTask:(id)=>{
-    const db=getDB();
-    const t=db.tasks.find(t=>t.id===id);
-    if(!t)return null;
-    return{...t,subtasks:db.subtasks.filter(s=>s.task_id===id),comments:db.comments.filter(c=>c.task_id===id).sort((a,b)=>a.created_at.localeCompare(b.created_at))};
+  async getTask(id){
+    const{data:t,error}=await supabase.from('tfp_tasks').select('*').eq('id',id).single();
+    if(error)throw error;
+    const[{data:subtasks},{data:comments}]=await Promise.all([
+      supabase.from('tfp_subtasks').select('*').eq('task_id',id).order('created_at',{ascending:true}),
+      supabase.from('tfp_comments').select('*').eq('task_id',id).order('created_at',{ascending:true}),
+    ]);
+    return{...t,subtasks:subtasks||[],comments:comments||[]};
   },
-  createTask:(data)=>{const db=getDB();const t={id:uid(),created_at:now(),updated_at:now(),description:'',assignee:'',labels:'',due_date:null,start_date:null,progress:0,...data};db.tasks.push(t);saveDB(db);return t},
-  updateTask:(id,data)=>{const db=getDB();const i=db.tasks.findIndex(t=>t.id===id);if(i===-1)return;db.tasks[i]={...db.tasks[i],...data,updated_at:now()};saveDB(db);return db.tasks[i]},
-  deleteTask:(id)=>{const db=getDB();db.tasks=db.tasks.filter(t=>t.id!==id);db.subtasks=db.subtasks.filter(s=>s.task_id!==id);db.comments=db.comments.filter(c=>c.task_id!==id);saveDB(db)},
-  createSubtask:(task_id,title)=>{const db=getDB();const s={id:uid(),task_id,title,done:false};db.subtasks.push(s);saveDB(db);return s},
-  toggleSubtask:(id)=>{const db=getDB();const s=db.subtasks.find(s=>s.id===id);if(s)s.done=!s.done;saveDB(db)},
-  deleteSubtask:(id)=>{const db=getDB();db.subtasks=db.subtasks.filter(s=>s.id!==id);saveDB(db)},
-  createComment:(task_id,content,author)=>{const db=getDB();const c={id:uid(),task_id,author,content,created_at:now()};db.comments.push(c);saveDB(db);return c},
-  deleteComment:(id)=>{const db=getDB();db.comments=db.comments.filter(c=>c.id!==id);saveDB(db)},
-  getDashboard:(pid)=>{
-    const tasks=CRUD.getTasks(pid?{project_id:pid}:{});
+  async createTask(data){
+    const t={id:uid(),created_at:now(),updated_at:now(),description:'',assignee:'',labels:'',due_date:null,start_date:null,progress:0,...data};
+    const{data:res,error}=await supabase.from('tfp_tasks').insert(t).select().single();
+    if(error)throw error;
+    return res;
+  },
+  async updateTask(id,data){
+    const{data:res,error}=await supabase.from('tfp_tasks').update({...data,updated_at:now()}).eq('id',id).select().single();
+    if(error)throw error;
+    return res;
+  },
+  async deleteTask(id){
+    await supabase.from('tfp_subtasks').delete().eq('task_id',id);
+    await supabase.from('tfp_comments').delete().eq('task_id',id);
+    const{error}=await supabase.from('tfp_tasks').delete().eq('id',id);
+    if(error)throw error;
+  },
+
+  // Subtasks
+  async createSubtask(task_id,title){
+    const s={id:uid(),task_id,title,status:'todo',created_at:now()};
+    const{data:res,error}=await supabase.from('tfp_subtasks').insert(s).select().single();
+    if(error)throw error;
+    return res;
+  },
+  async updateSubtask(id,data){
+    const{data:res,error}=await supabase.from('tfp_subtasks').update(data).eq('id',id).select().single();
+    if(error)throw error;
+    return res;
+  },
+  async toggleSubtask(id,currentStatus){
+    const newStatus=currentStatus==='done'?'todo':'done';
+    return CRUD.updateSubtask(id,{status:newStatus});
+  },
+  async deleteSubtask(id){
+    const{error}=await supabase.from('tfp_subtasks').delete().eq('id',id);
+    if(error)throw error;
+  },
+
+  // Comments
+  async createComment(task_id,content,author){
+    const c={id:uid(),task_id,author,content,created_at:now()};
+    const{data:res,error}=await supabase.from('tfp_comments').insert(c).select().single();
+    if(error)throw error;
+    return res;
+  },
+  async deleteComment(id){
+    const{error}=await supabase.from('tfp_comments').delete().eq('id',id);
+    if(error)throw error;
+  },
+
+  // Dashboard
+  async getDashboard(pid){
+    const tasks=await CRUD.getTasks(pid?{project_id:pid}:{});
     const total=tasks.length;
     const by_status={'未着手':0,'進行中':0,'レビュー中':0,'完了':0};
     const by_assignee={};let overdue=0;
@@ -173,22 +194,37 @@ const CRUD={
     const done=by_status['完了']||0;
     return{total,by_status,by_assignee,overdue,completion_rate:total?Math.round(done/total*100*10)/10:0};
   },
-  getUsers:()=>getDB().users||[],
-  createUser:async(data)=>{
-    const db=getDB();
-    if(!db.users)db.users=[];
-    if(db.users.find(u=>u.username===data.username))throw new Error('既に使用されているユーザー名です');
+
+  // Users
+  async getUsers(){
+    const{data,error}=await supabase.from('tfp_users').select('id, username, display_name, color, role, created_at').order('created_at',{ascending:true});
+    if(error)throw error;
+    return data||[];
+  },
+  async createUser(data){
+    const{data:existing}=await supabase.from('tfp_users').select('id').eq('username',data.username).single();
+    if(existing)throw new Error('既に使用されているユーザー名です');
     const hash=await sha256(data.password);
     const u={id:uid(),username:data.username,display_name:data.display_name||data.username,color:data.color||'#6366f1',password_hash:hash,role:'member',created_at:now()};
-    db.users.push(u);saveDB(db);return u;
+    const{data:res,error}=await supabase.from('tfp_users').insert(u).select('id,username,display_name,color,role,created_at').single();
+    if(error)throw error;
+    return res;
   },
-  authenticate:async(username,password)=>{
-    const db=getDB();
-    const u=(db.users||[]).find(u=>u.username===username);
-    if(!u)throw new Error('ユーザーが見つかりません');
+  async authenticate(username,password){
+    const{data:u,error}=await supabase.from('tfp_users').select('*').eq('username',username).single();
+    if(error||!u)throw new Error('ユーザーが見つかりません');
     const hash=await sha256(password);
     if(hash!==u.password_hash)throw new Error('パスワードが違います');
     return u;
+  },
+  async deleteUser(id){
+    const{error}=await supabase.from('tfp_users').delete().eq('id',id);
+    if(error)throw error;
+  },
+  async updateUserRole(id,role){
+    const{data:res,error}=await supabase.from('tfp_users').update({role}).eq('id',id).select('id,username,display_name,color,role,created_at').single();
+    if(error)throw error;
+    return res;
   },
 };
 
@@ -228,6 +264,12 @@ function LabelPill({label}){return <span className="text-xs px-2 py-0.5 rounded-
 function ProgressBar({pct,height=6}){
   return <div className="rounded-full overflow-hidden bg-gray-100" style={{height}}>
     <div className="h-full rounded-full transition-all" style={{width:`${pct}%`,background:pctColor(pct)}}/>
+  </div>
+}
+
+function Spinner(){
+  return <div className="flex items-center justify-center py-12">
+    <div className="w-8 h-8 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"/>
   </div>
 }
 
@@ -321,7 +363,7 @@ function LoginScreen({onLogin}){
         )}
 
         <p className="text-center text-xs text-gray-400 mt-4 flex items-center justify-center gap-1">
-          <span>🔒</span> データはこのブラウザにのみ保存されます
+          <span>🔒</span> Supabaseに安全に保存されます
         </p>
       </div>
     </div>
@@ -379,14 +421,12 @@ function KanbanCol({status,tasks,onDrop,onCard,onNew,selectedId}){
 }
 
 // ─── WBS View ─────────────────────────────────────────────────────────
-function WBSView({tasks,projects,onSelect,onNew,selectedId,refresh}){
+function WBSView({tasks,projects,subtasksMap,onSelect,onNew,selectedId}){
   const[sortKey,setSortKey]=useState('wbs');
   const[sortDir,setSortDir]=useState(1);
 
-  // WBS番号の生成: プロジェクト別にグループ化し番号付け
   const wbsData=useMemo(()=>{
     const rows=[];
-    const db=getDB();
     const grouped={};
     tasks.forEach(t=>{
       if(!grouped[t.project_id])grouped[t.project_id]=[];
@@ -401,16 +441,16 @@ function WBSView({tasks,projects,onSelect,onNew,selectedId,refresh}){
       rows.push({type:'project',id:pid,wbs:`${pNum}`,title:proj?.name||pid,level:0,pct:allPct,proj});
 
       ptasks.forEach((t,ti)=>{
-        const subs=db.subtasks.filter(s=>s.task_id===t.id);
+        const subs=subtasksMap[t.id]||[];
         rows.push({type:'task',id:t.id,wbs:`${pNum}.${ti+1}`,title:t.title,level:1,task:t,pct:t.effective_progress||0,subs});
 
         subs.forEach((s,si)=>{
-          rows.push({type:'subtask',id:s.id,wbs:`${pNum}.${ti+1}.${si+1}`,title:s.title,level:2,subtask:s,pct:s.done?100:0});
+          rows.push({type:'subtask',id:s.id,wbs:`${pNum}.${ti+1}.${si+1}`,title:s.title,level:2,subtask:s,pct:s.status==='done'?100:0});
         });
       });
     }
     return rows;
-  },[tasks,projects]);
+  },[tasks,projects,subtasksMap]);
 
   function toggleSort(key){
     if(sortKey===key)setSortDir(d=>-d);
@@ -443,7 +483,7 @@ function WBSView({tasks,projects,onSelect,onNew,selectedId,refresh}){
               </tr>
             </thead>
             <tbody>
-              {wbsData.map((row,i)=>{
+              {wbsData.map((row)=>{
                 if(row.type==='project'){
                   return(
                     <tr key={row.id} className="bg-indigo-50 border-b border-indigo-100">
@@ -505,10 +545,10 @@ function WBSView({tasks,projects,onSelect,onNew,selectedId,refresh}){
                       <td className="px-3 py-2 text-xs font-mono text-gray-400 pl-4">{row.wbs}</td>
                       <td className="px-3 py-2" colSpan={5}>
                         <div className="pl-8 flex items-center gap-2">
-                          <span className={`w-3.5 h-3.5 rounded border-2 flex items-center justify-center shrink-0 ${s.done?'bg-green-500 border-green-500':'border-gray-300'}`}>
-                            {s.done&&<span className="text-white text-xs leading-none">✓</span>}
+                          <span className={`w-3.5 h-3.5 rounded border-2 flex items-center justify-center shrink-0 ${s.status==='done'?'bg-green-500 border-green-500':'border-gray-300'}`}>
+                            {s.status==='done'&&<span className="text-white text-xs leading-none">✓</span>}
                           </span>
-                          <span className={`text-xs ${s.done?'line-through text-gray-400':'text-gray-600'}`}>{s.title}</span>
+                          <span className={`text-xs ${s.status==='done'?'line-through text-gray-400':'text-gray-600'}`}>{s.title}</span>
                         </div>
                       </td>
                       <td className="px-3 py-2 text-xs text-gray-400">—</td>
@@ -548,10 +588,9 @@ function CalendarView({tasks,onSelect}){
   const today=new Date();
   const firstDay=new Date(year,month,1);
   const lastDay=new Date(year,month+1,0);
-  const startPad=firstDay.getDay(); // 0=Sun
+  const startPad=firstDay.getDay();
   const totalCells=Math.ceil((startPad+lastDay.getDate())/7)*7;
 
-  // 各日付にタスクをマッピング
   const tasksByDate={};
   tasks.forEach(t=>{
     if(t.due_date){
@@ -589,14 +628,12 @@ function CalendarView({tasks,onSelect}){
       </div>
 
       <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-        {/* 曜日ヘッダー */}
         <div className="grid grid-cols-7 border-b border-gray-100">
           {WEEKDAYS.map((w,i)=>(
             <div key={w} className={`py-2.5 text-center text-xs font-black uppercase tracking-wide ${i===0?'text-red-500':i===6?'text-blue-500':'text-gray-500'}`}>{w}</div>
           ))}
         </div>
 
-        {/* カレンダーグリッド */}
         {weeks.map((week,wi)=>(
           <div key={wi} className="grid grid-cols-7 border-b border-gray-100 last:border-0" style={{minHeight:100}}>
             {week.map((cell,ci)=>{
@@ -634,7 +671,6 @@ function CalendarView({tasks,onSelect}){
         ))}
       </div>
 
-      {/* 期限なしタスク */}
       {noDateTasks.length>0&&(
         <div className="mt-4 bg-white rounded-2xl border border-gray-100 p-4">
           <p className="text-sm font-bold text-gray-600 mb-3">📌 期限未設定のタスク（{noDateTasks.length}件）</p>
@@ -654,8 +690,10 @@ function CalendarView({tasks,onSelect}){
 }
 
 // ─── Dashboard ────────────────────────────────────────────────────────
-function DashboardView({projects,activeProjectId}){
-  const data=useMemo(()=>CRUD.getDashboard(activeProjectId),[activeProjectId]);
+function DashboardView({projects,activeProjectId,dashData,isLoading}){
+  if(isLoading)return<Spinner/>;
+  if(!dashData)return null;
+  const data=dashData;
   const cards=[
     {label:'総タスク数',value:data.total,cls:'text-indigo-600',bg:'bg-indigo-50 border-indigo-100'},
     {label:'完了率',value:`${data.completion_rate}%`,cls:'text-green-600',bg:'bg-green-50 border-green-100'},
@@ -702,7 +740,8 @@ function DashboardView({projects,activeProjectId}){
 }
 
 // ─── List View ────────────────────────────────────────────────────────
-function ListView({tasks,onSelect,selectedId,onNew}){
+function ListView({tasks,onSelect,selectedId,onNew,isLoading}){
+  if(isLoading)return<Spinner/>;
   return(
     <div className="p-4">
       {tasks.length===0
@@ -745,6 +784,84 @@ function ListView({tasks,onSelect,selectedId,onNew}){
   );
 }
 
+// ─── User Management View (admin only) ───────────────────────────────
+function UserManagementView({currentUser,refresh}){
+  const[users,setUsers]=useState([]);
+  const[isLoading,setIsLoading]=useState(true);
+  const[error,setError]=useState('');
+
+  async function loadUsers(){
+    setIsLoading(true);
+    try{const data=await CRUD.getUsers();setUsers(data);}
+    catch(e){setError(e.message);}
+    finally{setIsLoading(false);}
+  }
+  useEffect(()=>{loadUsers();},[]);
+
+  async function handleDelete(id){
+    if(id===currentUser.user_id){alert('自分自身は削除できません');return;}
+    if(!confirm('このユーザーを削除しますか？'))return;
+    try{await CRUD.deleteUser(id);await loadUsers();}
+    catch(e){setError(e.message);}
+  }
+  async function handleRoleChange(id,newRole){
+    try{await CRUD.updateUserRole(id,newRole);await loadUsers();}
+    catch(e){setError(e.message);}
+  }
+
+  if(isLoading)return<Spinner/>;
+
+  return(
+    <div className="p-6 max-w-3xl">
+      <h2 className="text-xl font-black text-gray-800 mb-6">ユーザー管理</h2>
+      {error&&<p className="text-red-500 text-xs bg-red-50 rounded-lg px-3 py-2 mb-4">{error}</p>}
+      <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
+        <table className="w-full">
+          <thead className="bg-gray-50 border-b border-gray-100">
+            <tr>
+              <th className="text-left px-4 py-3 text-xs font-black text-gray-500 uppercase">ユーザー</th>
+              <th className="text-left px-3 py-3 text-xs font-black text-gray-500 uppercase">ユーザー名</th>
+              <th className="text-left px-3 py-3 text-xs font-black text-gray-500 uppercase">ロール</th>
+              <th className="text-left px-3 py-3 text-xs font-black text-gray-500 uppercase hidden md:table-cell">登録日</th>
+              <th className="px-3 py-3"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {users.map(u=>(
+              <tr key={u.id} className="border-b border-gray-100">
+                <td className="px-4 py-3">
+                  <div className="flex items-center gap-2">
+                    <Avatar name={u.display_name} size={28}/>
+                    <span className="text-sm font-semibold text-gray-800">{u.display_name}</span>
+                    {u.id===currentUser.user_id&&<span className="text-xs bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded-full font-bold">自分</span>}
+                  </div>
+                </td>
+                <td className="px-3 py-3 text-sm text-gray-500 font-mono">{u.username}</td>
+                <td className="px-3 py-3">
+                  {u.id===currentUser.user_id
+                    ?<span className={`text-xs font-bold px-2 py-1 rounded-full ${u.role==='admin'?'bg-indigo-100 text-indigo-700':'bg-gray-100 text-gray-600'}`}>{u.role}</span>
+                    :<select value={u.role} onChange={e=>handleRoleChange(u.id,e.target.value)}
+                        className="text-xs border border-gray-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-indigo-200">
+                        <option value="admin">admin</option>
+                        <option value="member">member</option>
+                      </select>
+                  }
+                </td>
+                <td className="px-3 py-3 text-xs text-gray-400 hidden md:table-cell">{fmtDateLong(u.created_at)}</td>
+                <td className="px-3 py-3 text-right">
+                  {u.id!==currentUser.user_id&&(
+                    <button onClick={()=>handleDelete(u.id)} className="text-xs px-2.5 py-1 rounded-lg border border-red-200 text-red-500 hover:bg-red-50 font-semibold">削除</button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ─── Task Form Modal ──────────────────────────────────────────────────
 function TaskFormModal({task,projects,defaultStatus,onSave,onClose}){
   const[form,setForm]=useState({
@@ -756,14 +873,21 @@ function TaskFormModal({task,projects,defaultStatus,onSave,onClose}){
     due_date:task?.due_date?task.due_date.slice(0,10):'',
     progress:task?.progress??0,
   });
+  const[saving,setSaving]=useState(false);
+  const[error,setError]=useState('');
   const set=(k,v)=>setForm(f=>({...f,[k]:v}));
   const inp="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300 bg-white";
-  function submit(e){
+
+  async function submit(e){
     e.preventDefault();if(!form.title.trim())return;
-    const data={...form,project_id:form.project_id,due_date:form.due_date||null,start_date:form.start_date||null,progress:Number(form.progress)||0};
-    if(task?.id)CRUD.updateTask(task.id,data);
-    else CRUD.createTask(data);
-    onSave();
+    setSaving(true);setError('');
+    try{
+      const data={...form,project_id:form.project_id,due_date:form.due_date||null,start_date:form.start_date||null,progress:Number(form.progress)||0};
+      if(task?.id)await CRUD.updateTask(task.id,data);
+      else await CRUD.createTask(data);
+      onSave();
+    }catch(e){setError(e.message);}
+    finally{setSaving(false);}
   }
   return(
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
@@ -773,6 +897,7 @@ function TaskFormModal({task,projects,defaultStatus,onSave,onClose}){
           <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-xl hover:bg-gray-100 text-gray-400 text-2xl">&times;</button>
         </div>
         <form onSubmit={submit} className="p-6 space-y-4 overflow-y-auto flex-1">
+          {error&&<p className="text-red-500 text-xs bg-red-50 rounded-lg px-3 py-2">{error}</p>}
           <div><label className="text-xs font-black text-gray-500 uppercase tracking-wide mb-1.5 block">タイトル *</label>
             <input className={inp} value={form.title} onChange={e=>set('title',e.target.value)} required placeholder="タスクのタイトル" autoFocus/></div>
           <div><label className="text-xs font-black text-gray-500 uppercase tracking-wide mb-1.5 block">説明</label>
@@ -802,7 +927,7 @@ function TaskFormModal({task,projects,defaultStatus,onSave,onClose}){
             <select className={inp} value={form.project_id} onChange={e=>set('project_id',e.target.value)}>{projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></div>
           <div className="flex gap-3 pt-2">
             <button type="button" onClick={onClose} className="flex-1 py-3 rounded-xl border border-gray-200 text-sm text-gray-600 hover:bg-gray-50 font-bold">キャンセル</button>
-            <button type="submit" className="flex-1 py-3 rounded-xl bg-indigo-600 text-white text-sm hover:bg-indigo-700 font-black">保存する</button>
+            <button type="submit" disabled={saving} className="flex-1 py-3 rounded-xl bg-indigo-600 text-white text-sm hover:bg-indigo-700 font-black disabled:opacity-50">{saving?'保存中…':'保存する'}</button>
           </div>
         </form>
       </div>
@@ -811,24 +936,64 @@ function TaskFormModal({task,projects,defaultStatus,onSave,onClose}){
 }
 
 // ─── Detail Panel ─────────────────────────────────────────────────────
-function DetailPanel({taskId,projects,onClose,onEdit,onDeleted,refresh,currentUser}){
+function DetailPanel({taskId,projects,onClose,onEdit,onDeleted,tick,currentUser}){
   const[task,setTask]=useState(null);
+  const[isLoading,setIsLoading]=useState(true);
   const[newSub,setNewSub]=useState('');
   const[comment,setComment]=useState('');
   const[delConf,setDelConf]=useState(false);
-  const load=useCallback(()=>setTask(CRUD.getTask(taskId)),[taskId]);
-  useEffect(()=>{load()},[load,refresh]);
-  if(!task)return<div className="w-80 shrink-0 bg-white border-l flex items-center justify-center"><span className="text-gray-400 text-sm">読み込み中…</span></div>;
+
+  const load=useCallback(async()=>{
+    setIsLoading(true);
+    try{const t=await CRUD.getTask(taskId);setTask(t);}
+    catch(e){console.error(e);}
+    finally{setIsLoading(false);}
+  },[taskId]);
+
+  useEffect(()=>{load();},[load,tick]);
+
+  if(isLoading||!task)return(
+    <div className="w-80 shrink-0 bg-white border-l flex items-center justify-center" style={{minWidth:320}}>
+      <Spinner/>
+    </div>
+  );
+
   const st=ST[task.status]||ST['未着手'];
   const project=projects.find(p=>p.id===task.project_id);
   const labels=(task.labels||'').split(',').map(l=>l.trim()).filter(Boolean);
-  const doneSubs=task.subtasks.filter(s=>s.done).length;
+  const doneSubs=task.subtasks.filter(s=>s.status==='done').length;
   const autoP=task.subtasks.length?Math.round(doneSubs/task.subtasks.length*100):0;
   const pct=task.progress||autoP;
-  function addSub(){if(!newSub.trim())return;CRUD.createSubtask(task.id,newSub);setNewSub('');load();refresh();}
-  function postComment(){if(!comment.trim())return;CRUD.createComment(task.id,comment,currentUser?.display_name||'ゲスト');setComment('');load();}
-  function delTask(){CRUD.deleteTask(task.id);onDeleted();}
+
+  async function addSub(){
+    if(!newSub.trim())return;
+    try{await CRUD.createSubtask(task.id,newSub);setNewSub('');await load();}
+    catch(e){console.error(e);}
+  }
+  async function postComment(){
+    if(!comment.trim())return;
+    try{await CRUD.createComment(task.id,comment,currentUser?.display_name||'ゲスト');setComment('');await load();}
+    catch(e){console.error(e);}
+  }
+  async function delTask(){
+    try{await CRUD.deleteTask(task.id);onDeleted();}
+    catch(e){console.error(e);}
+  }
+  async function handleToggleSub(s){
+    try{await CRUD.toggleSubtask(s.id,s.status);await load();}
+    catch(e){console.error(e);}
+  }
+  async function handleDeleteSub(id){
+    try{await CRUD.deleteSubtask(id);await load();}
+    catch(e){console.error(e);}
+  }
+  async function handleDeleteComment(id){
+    try{await CRUD.deleteComment(id);await load();}
+    catch(e){console.error(e);}
+  }
+
   const F=({label,children})=><div className="flex items-start gap-3 py-2.5 border-b border-gray-50"><span className="text-xs text-gray-400 w-16 shrink-0 pt-0.5 font-semibold">{label}</span><div className="flex-1 text-xs">{children}</div></div>;
+
   return(
     <div className="w-80 shrink-0 bg-white border-l border-gray-200 flex flex-col overflow-hidden panel-enter" style={{minWidth:320}}>
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
@@ -861,9 +1026,9 @@ function DetailPanel({taskId,projects,onClose,onEdit,onDeleted,refresh,currentUs
           <div className="space-y-1.5 mb-2">
             {task.subtasks.map(s=>(
               <div key={s.id} className="flex items-center gap-2 group">
-                <input type="checkbox" checked={s.done} onChange={()=>{CRUD.toggleSubtask(s.id);load();refresh();}} className="rounded border-gray-300 text-indigo-600 cursor-pointer"/>
-                <span className={`flex-1 text-xs ${s.done?'line-through text-gray-400':'text-gray-700'}`}>{s.title}</span>
-                <button onClick={()=>{CRUD.deleteSubtask(s.id);load();refresh();}} className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 text-sm">×</button>
+                <input type="checkbox" checked={s.status==='done'} onChange={()=>handleToggleSub(s)} className="rounded border-gray-300 text-indigo-600 cursor-pointer"/>
+                <span className={`flex-1 text-xs ${s.status==='done'?'line-through text-gray-400':'text-gray-700'}`}>{s.title}</span>
+                <button onClick={()=>handleDeleteSub(s.id)} className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 text-sm">×</button>
               </div>
             ))}
           </div>
@@ -883,7 +1048,7 @@ function DetailPanel({taskId,projects,onClose,onEdit,onDeleted,refresh,currentUs
                   <span className="text-xs font-black text-gray-700">{c.author}</span>
                   <div className="flex items-center gap-1">
                     <span className="text-xs text-gray-400">{new Date(c.created_at).toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
-                    <button onClick={()=>{CRUD.deleteComment(c.id);load();}} className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 text-xs">×</button>
+                    <button onClick={()=>handleDeleteComment(c.id)} className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 text-xs">×</button>
                   </div>
                 </div>
                 <p className="text-xs text-gray-600 mt-0.5 whitespace-pre-wrap">{c.content}</p>
@@ -906,19 +1071,29 @@ function DetailPanel({taskId,projects,onClose,onEdit,onDeleted,refresh,currentUs
 }
 
 // ─── Sidebar ──────────────────────────────────────────────────────────
-function Sidebar({projects,activeProjectId,onSelect,reload,onProjectDeleted,view,onView,currentUser,onLogout}){
+function Sidebar({projects,activeProjectId,onSelect,reload,onProjectDeleted,view,onView,currentUser,onLogout,taskCounts}){
   const[adding,setAdding]=useState(false);
   const[newName,setNewName]=useState('');
   const[newColor,setNewColor]=useState('#6366f1');
   const COLORS=['#6366f1','#0ea5e9','#f59e0b','#10b981','#ec4899','#ef4444'];
-  function addProject(){if(!newName.trim())return;CRUD.createProject({name:newName,color:newColor});setNewName('');setNewColor('#6366f1');setAdding(false);reload();}
+
+  async function addProject(){
+    if(!newName.trim())return;
+    try{
+      await CRUD.createProject({name:newName,color:newColor});
+      setNewName('');setNewColor('#6366f1');setAdding(false);reload();
+    }catch(e){console.error(e);}
+  }
+
   const navItems=[
     {id:'dashboard',label:'ダッシュボード',icon:'📊'},
     {id:'wbs',label:'WBS',icon:'📋'},
     {id:'board',label:'ボード',icon:'⬛'},
     {id:'list',label:'リスト',icon:'☰'},
     {id:'calendar',label:'カレンダー',icon:'📅'},
+    ...(currentUser?.role==='admin'?[{id:'users',label:'ユーザー管理',icon:'👥'}]:[]),
   ];
+
   return(
     <div className="w-52 shrink-0 bg-white border-r border-gray-100 flex flex-col h-full" style={{boxShadow:'1px 0 0 #f1f5f9'}}>
       <div className="px-4 py-4 border-b border-gray-100">
@@ -957,7 +1132,7 @@ function Sidebar({projects,activeProjectId,onSelect,reload,onProjectDeleted,view
           <div key={p.id} className="group flex items-center">
             <button onClick={()=>onSelect(p.id)} className={`flex-1 min-w-0 text-left px-3 py-2 rounded-xl text-sm font-semibold transition-colors flex items-center gap-2 ${activeProjectId===p.id?'bg-indigo-50 text-indigo-700':'text-gray-600 hover:bg-gray-50'}`}>
               <span className="w-2.5 h-2.5 rounded-sm shrink-0" style={{background:p.color}}/><span className="truncate">{p.name}</span>
-              <span className="text-xs text-gray-400 ml-auto shrink-0">{CRUD.getTasks({project_id:p.id}).length}</span>
+              <span className="text-xs text-gray-400 ml-auto shrink-0">{taskCounts[p.id]||0}</span>
             </button>
             <button onClick={()=>onProjectDeleted(p.id)} className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-400 px-1 text-sm">×</button>
           </div>
@@ -1009,14 +1184,107 @@ function App(){
   const[selectedId,setSelectedId]=useState(null);
   const[taskForm,setTaskForm]=useState(null);
 
-  const projects=useMemo(()=>CRUD.getProjects(),[tick]);
-  const tasks=useMemo(()=>CRUD.getTasks({project_id:activeProjectId||undefined,...filters}),[tick,activeProjectId,filters]);
-  const assignees=useMemo(()=>[...new Set(CRUD.getTasks({project_id:activeProjectId||undefined}).map(t=>t.assignee).filter(Boolean))],[tick,activeProjectId]);
+  // Data states
+  const[projects,setProjects]=useState([]);
+  const[tasks,setTasks]=useState([]);
+  const[allTasksForCal,setAllTasksForCal]=useState([]);
+  const[subtasksMap,setSubtasksMap]=useState({});
+  const[dashData,setDashData]=useState(null);
+  const[users,setUsers]=useState([]);
+  const[taskCounts,setTaskCounts]=useState({});
+  const[isLoadingTasks,setIsLoadingTasks]=useState(false);
+  const[isLoadingDash,setIsLoadingDash]=useState(false);
+
+  // Load projects
+  useEffect(()=>{
+    async function load(){
+      try{const data=await CRUD.getProjects();setProjects(data);}
+      catch(e){console.error('projects load error',e);}
+    }
+    load();
+  },[tick]);
+
+  // Load tasks with filters
+  useEffect(()=>{
+    if(!currentUser)return;
+    setIsLoadingTasks(true);
+    async function load(){
+      try{
+        const data=await CRUD.getTasks({project_id:activeProjectId||undefined,...filters});
+        setTasks(data);
+        // Build subtasks map for WBS
+        const tids=data.map(t=>t.id);
+        if(tids.length>0){
+          const{data:subs}=await supabase.from('tfp_subtasks').select('*').in('task_id',tids).order('created_at',{ascending:true});
+          const map={};
+          (subs||[]).forEach(s=>{if(!map[s.task_id])map[s.task_id]=[];map[s.task_id].push(s);});
+          setSubtasksMap(map);
+        }else{setSubtasksMap({});}
+      }catch(e){console.error('tasks load error',e);}
+      finally{setIsLoadingTasks(false);}
+    }
+    load();
+  },[tick,activeProjectId,filters,currentUser]);
+
+  // Load all tasks for calendar (no filters except project)
+  useEffect(()=>{
+    if(!currentUser)return;
+    async function load(){
+      try{const data=await CRUD.getTasks({project_id:activeProjectId||undefined});setAllTasksForCal(data);}
+      catch(e){console.error(e);}
+    }
+    load();
+  },[tick,activeProjectId,currentUser]);
+
+  // Load dashboard data
+  useEffect(()=>{
+    if(!currentUser||view!=='dashboard')return;
+    setIsLoadingDash(true);
+    async function load(){
+      try{const data=await CRUD.getDashboard(activeProjectId||undefined);setDashData(data);}
+      catch(e){console.error(e);}
+      finally{setIsLoadingDash(false);}
+    }
+    load();
+  },[tick,activeProjectId,currentUser,view]);
+
+  // Load users for header avatars
+  useEffect(()=>{
+    if(!currentUser)return;
+    async function load(){
+      try{const data=await CRUD.getUsers();setUsers(data);}
+      catch(e){console.error(e);}
+    }
+    load();
+  },[tick,currentUser]);
+
+  // Build task counts per project for sidebar
+  useEffect(()=>{
+    if(!projects.length)return;
+    async function load(){
+      try{
+        const{data}=await supabase.from('tfp_tasks').select('project_id');
+        const counts={};
+        (data||[]).forEach(t=>{counts[t.project_id]=(counts[t.project_id]||0)+1;});
+        setTaskCounts(counts);
+      }catch(e){console.error(e);}
+    }
+    load();
+  },[tick,projects]);
+
+  const assignees=useMemo(()=>[...new Set(tasks.map(t=>t.assignee).filter(Boolean))],[tasks]);
 
   if(!currentUser)return<LoginScreen onLogin={u=>{setCurrentUser(u)}}/>;
 
-  function handleDrop(taskId,newStatus){CRUD.updateTask(taskId,{status:newStatus});refresh();}
-  function deleteProject(id){if(!confirm('このプロジェクトと全タスクを削除しますか？'))return;CRUD.deleteProject(id);if(activeProjectId===id)setActiveProjectId(null);refresh();}
+  async function handleDrop(taskId,newStatus){
+    try{await CRUD.updateTask(taskId,{status:newStatus});refresh();}
+    catch(e){console.error(e);}
+  }
+  async function deleteProject(id){
+    if(!confirm('このプロジェクトと全タスクを削除しますか？'))return;
+    try{await CRUD.deleteProject(id);if(activeProjectId===id)setActiveProjectId(null);refresh();}
+    catch(e){console.error(e);}
+  }
   function handleLogout(){clearSession();setCurrentUser(null);}
 
   const activeProject=projects.find(p=>p.id===activeProjectId);
@@ -1026,12 +1294,15 @@ function App(){
     {id:'board',label:'ボード'},
     {id:'list',label:'リスト'},
     {id:'calendar',label:'カレンダー'},
+    ...(currentUser?.role==='admin'?[{id:'users',label:'👥 ユーザー'}]:[]),
   ];
 
   return(
     <div className="flex h-screen overflow-hidden bg-gray-50">
-      <Sidebar projects={projects} activeProjectId={activeProjectId} onSelect={id=>{setActiveProjectId(id);setSelectedId(null);}} reload={refresh}
-        onProjectDeleted={deleteProject} view={view} onView={v=>{setView(v);setSelectedId(null);}} currentUser={currentUser} onLogout={handleLogout}/>
+      <Sidebar projects={projects} activeProjectId={activeProjectId}
+        onSelect={id=>{setActiveProjectId(id);setSelectedId(null);}} reload={refresh}
+        onProjectDeleted={deleteProject} view={view} onView={v=>{setView(v);setSelectedId(null);}}
+        currentUser={currentUser} onLogout={handleLogout} taskCounts={taskCounts}/>
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <div className="bg-white border-b border-gray-100 px-6 pt-4 pb-0">
@@ -1042,7 +1313,7 @@ function App(){
             </div>
             <div className="flex items-center gap-3">
               <div className="flex -space-x-1.5">
-                {CRUD.getUsers().slice(0,4).map(u=><div key={u.id} className="ring-2 ring-white rounded-full"><Avatar name={u.display_name} size={28}/></div>)}
+                {users.slice(0,4).map(u=><div key={u.id} className="ring-2 ring-white rounded-full"><Avatar name={u.display_name} size={28}/></div>)}
               </div>
               <button onClick={()=>setTaskForm({})} className="px-4 py-2 bg-indigo-600 text-white text-sm font-black rounded-xl hover:bg-indigo-700 shadow-sm">+ 新しいタスク</button>
             </div>
@@ -1057,29 +1328,35 @@ function App(){
           </div>
         </div>
 
-        {view!=='dashboard'&&view!=='calendar'&&<FilterBar filters={filters} onChange={setFilters} assignees={assignees||[]}/>}
+        {view!=='dashboard'&&view!=='calendar'&&view!=='users'&&<FilterBar filters={filters} onChange={setFilters} assignees={assignees||[]}/>}
 
         <div className="flex-1 flex min-h-0 overflow-hidden">
           <div className="flex-1 overflow-auto">
-            {view==='dashboard'&&<DashboardView projects={projects} activeProjectId={activeProjectId}/>}
-            {view==='wbs'&&<WBSView tasks={tasks} projects={projects} onSelect={id=>setSelectedId(prev=>prev===id?null:id)} onNew={st=>setTaskForm({defaultStatus:st})} selectedId={selectedId} refresh={refresh}/>}
+            {view==='dashboard'&&<DashboardView projects={projects} activeProjectId={activeProjectId} dashData={dashData} isLoading={isLoadingDash}/>}
+            {view==='wbs'&&(isLoadingTasks?<Spinner/>:<WBSView tasks={tasks} projects={projects} subtasksMap={subtasksMap} onSelect={id=>setSelectedId(prev=>prev===id?null:id)} onNew={st=>setTaskForm({defaultStatus:st})} selectedId={selectedId}/>)}
             {view==='board'&&(
               <div className="p-6">
-                <div className="flex gap-5 pb-6" style={{minHeight:'calc(100vh - 230px)',overflowX:'auto'}}>
-                  {STATUSES.map(s=><KanbanCol key={s} status={s} tasks={tasks.filter(t=>t.status===s)} onDrop={handleDrop} onCard={id=>setSelectedId(prev=>prev===id?null:id)} onNew={st=>setTaskForm({defaultStatus:st})} selectedId={selectedId}/>)}
-                </div>
+                {isLoadingTasks?<Spinner/>:
+                  <div className="flex gap-5 pb-6" style={{minHeight:'calc(100vh - 230px)',overflowX:'auto'}}>
+                    {STATUSES.map(s=><KanbanCol key={s} status={s} tasks={tasks.filter(t=>t.status===s)} onDrop={handleDrop} onCard={id=>setSelectedId(prev=>prev===id?null:id)} onNew={st=>setTaskForm({defaultStatus:st})} selectedId={selectedId}/>)}
+                  </div>
+                }
               </div>
             )}
-            {view==='list'&&<ListView tasks={tasks} onSelect={id=>setSelectedId(prev=>prev===id?null:id)} selectedId={selectedId} onNew={st=>setTaskForm({defaultStatus:st})}/>}
-            {view==='calendar'&&<CalendarView tasks={CRUD.getTasks({project_id:activeProjectId||undefined})} onSelect={id=>{setSelectedId(id);setView('board');}}/>}
+            {view==='list'&&<ListView tasks={tasks} onSelect={id=>setSelectedId(prev=>prev===id?null:id)} selectedId={selectedId} onNew={st=>setTaskForm({defaultStatus:st})} isLoading={isLoadingTasks}/>}
+            {view==='calendar'&&<CalendarView tasks={allTasksForCal} onSelect={id=>{setSelectedId(id);setView('board');}}/>}
+            {view==='users'&&currentUser?.role==='admin'&&<UserManagementView currentUser={currentUser} refresh={refresh}/>}
           </div>
 
-          {selectedId&&view!=='calendar'&&(
+          {selectedId&&view!=='calendar'&&view!=='users'&&(
             <DetailPanel key={selectedId} taskId={selectedId} projects={projects} currentUser={currentUser}
               onClose={()=>setSelectedId(null)}
-              onEdit={()=>{const t=CRUD.getTask(selectedId);if(t)setTaskForm({task:t});}}
+              onEdit={async()=>{
+                try{const t=await CRUD.getTask(selectedId);if(t)setTaskForm({task:t});}
+                catch(e){console.error(e);}
+              }}
               onDeleted={()=>{setSelectedId(null);refresh();}}
-              refresh={tick}/>
+              tick={tick}/>
           )}
         </div>
       </div>
